@@ -1,0 +1,9 @@
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pylint.messages_control]
+disable = ["C0103", "C0301", "R0913"]
+max-line-length = 120
