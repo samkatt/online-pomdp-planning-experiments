@@ -19,17 +19,12 @@ from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
 from yaml.loader import SafeLoader
 
 import yaml
-from online_pomdp_planning_experiments.gym_gridverse.belief import (
-    create_rejection_sampling,
-)
+from online_pomdp_planning_experiments.belief import create_rejection_sampling
 from online_pomdp_planning_experiments.gym_gridverse.experiment import (
     mdp_planning,
     pomdp_planning,
 )
-from online_pomdp_planning_experiments.gym_gridverse.planners import (
-    create_mcts,
-    create_pouct,
-)
+from online_pomdp_planning_experiments.planners import create_mcts, create_pouct
 
 
 def main():
