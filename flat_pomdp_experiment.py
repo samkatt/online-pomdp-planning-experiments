@@ -54,19 +54,20 @@ def main():
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
 
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-
     # load domain
     with open(args.domain_file, "r") as f:
         flat_pomdp = POMDP(f.read(), episodic=True)
     env = FlatPOMDPEnvironment(flat_pomdp)
 
+    conf["show_progress_bar"] = args.verbose
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
     # create solution method
     if args.solution_method == "po-uct":
         planner = flat_pomdps_interface.create_pouct(flat_pomdp, **conf)
         belief = flat_pomdps_interface.create_rejection_sampling(
-            flat_pomdp, conf["num_particles"]
+            flat_pomdp, conf["num_particles"], conf["show_progress_bar"]
         )
         episode_reset = partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)
     else:

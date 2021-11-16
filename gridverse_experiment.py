@@ -48,13 +48,14 @@ def main():
     with open(args.conf, "rb") as conf_file:
         conf = yaml.load(conf_file, Loader=SafeLoader)
 
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-
     # overwrite `conf` with additional key=value parameters in `overwrites`
     for overwrite in overwrites:
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
+
+    conf["show_progress_bar"] = args.verbose
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
 
     # load domain
     gym_gridverse_inner_env = factory_env_from_yaml(args.domain_yaml)
@@ -64,7 +65,7 @@ def main():
     if args.solution_method == "po-uct":
         planner = gym_gridverse_interface.create_pouct(gym_gridverse_inner_env, **conf)
         belief = gym_gridverse_interface.create_rejection_sampling(
-            gym_gridverse_inner_env, conf["num_particles"]
+            gym_gridverse_inner_env, conf["num_particles"], conf["show_progress_bar"]
         )
         episode_reset = partial(
             gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env

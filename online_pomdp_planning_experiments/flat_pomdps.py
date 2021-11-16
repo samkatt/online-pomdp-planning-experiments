@@ -7,9 +7,9 @@ import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
 from gym_pomdps.envs.pomdp import POMDP
-from online_pomdp_planning.mcts import create_POUCT
 
 from online_pomdp_planning_experiments.experiment import Environment
+from online_pomdp_planning_experiments.scratch_planners import create_POUCT
 
 
 class FlatPOMDPEnvironment(Environment):
@@ -35,21 +35,24 @@ class FlatPOMDPEnvironment(Environment):
         return self._pomdp.state
 
 
-def create_rejection_sampling(env: POMDP, n: int) -> belief_types.Belief:
+def create_rejection_sampling(
+    env: POMDP, n: int, show_progress_bar: bool
+) -> belief_types.Belief:
     """Creates rejection sampling update
 
     :param n: number of samples to track
+    :param show_progress_bar: ensures a progress bar is printed if ``True``
     """
 
     def sim(s, a):
         next_state, obs, *_ = env.step_functional(s, a)
         return next_state, obs
 
+    accept_func = RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
+
     return belief_types.Belief(
         env.reset_functional,
-        RS.create_rejection_sampling(
-            sim, n, eq, process_acpt=RS.AcceptionProgressBar(n)
-        ),
+        RS.create_rejection_sampling(sim, n, eq, process_acpt=accept_func),
     )
 
 
@@ -61,6 +64,7 @@ def create_pouct(
     rollout_depth: int,
     max_tree_depth: int,
     discount_factor: float,
+    show_progress_bar: bool,
     **_,
 ) -> planning_types.Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner
@@ -84,7 +88,7 @@ def create_pouct(
         rollout_depth=rollout_depth,
         max_tree_depth=max_tree_depth,
         discount_factor=discount_factor,
-        progress_bar=True,
+        progress_bar=show_progress_bar,
     )
 
 
