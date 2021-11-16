@@ -1,8 +1,8 @@
 """Main file for running experiments"""
 
-from typing import Any, Protocol, Tuple
+import logging
+from typing import Any, Dict, List, Protocol, Tuple
 
-from gym_gridverse.action import Action as GridverseAction
 from online_pomdp_planning.types import Planner
 from pomdp_belief_tracking.types import Belief
 
@@ -20,31 +20,41 @@ class Environment(Protocol):
         :return: (observation, reward, terminal)
         """
 
+    @property
+    def state(self) -> Any:
+        """I want to be able to get the state"""
 
-def run_episode(env: Environment, planner: Planner, belief: Belief):
-    """Runs an episode in ``env`` using ``planner`` to pick actions and ``belief`` for state estimation"""
+
+def run_episode(
+    env: Environment, planner: Planner, belief: Belief
+) -> List[Dict[str, Any]]:
+    """Runs an episode in ``env`` using ``planner`` to pick actions and ``belief`` for state estimation
+
+    :return: str => info dictionaries for each time step
+    """
 
     # to be generated and returned
-    rewards = []
     runtime_info = []
 
     terminal = False
 
     env.reset()
 
+    logging.debug("Start at S(%s)", env.state)
+
     while not terminal:
 
         action, planning_info = planner(belief.sample)
-        assert isinstance(action, GridverseAction)
 
         obs, reward, terminal = env.step(action)
 
-        # TODO: clean up
-        print(f"{action} => {env._env.state.agent}")
+        logging.debug("A(%s) => S(%s) with r(%f)", action, env.state, reward)
 
         belief_info = belief.update(action, obs)
 
-        runtime_info.append({"planning": planning_info, "belief": belief_info})
-        rewards.append(reward)
+        runtime_info.append(
+            {"planning": planning_info, "belief": belief_info, "reward": reward}
+        )
 
-    return rewards, runtime_info
+    logging.debug("Total reward: %.2f", sum(t["reward"] for t in runtime_info))
+    return runtime_info

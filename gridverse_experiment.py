@@ -1,25 +1,28 @@
-"""Entrypoint of experiments on online POMDP planners
+"""Entrypoint of experiments on online POMDP planners on GridVerse
 
 Functions as a gateway to the different experiments. Accepts a domain yaml
 file, then specifies the type of solution method, followed by solution method
 specific cofigurations. For example, to run MCTS (MDP) online planning::
 
-    python gridverse_experiment.py yaml/gv_crossing.7x7.yaml po-uct yaml/pouct_example.yaml
+    python gridverse_experiment.py conf/gridverse/gv_crossing.7x7.yaml po-uct conf/solutions/pouct_example.yaml
 
 Note that most solution methods assume configurations are at some point passed
 through a yaml file. For convenience we allow *overwriting* values in these
 config files by appending any call with overwriting values, for example::
 
-    python gridverse_experiment.py yaml/gv_empty.8x8.yaml po-uct yaml/pouct_example.yaml num_sims=128
+    python gridverse_experiment.py conf/gridverse/gv_empty.8x8.yaml po-uct conf/solutions/pouct_example.yaml num_sims=32
+
+Also accepts optional keyword '-v'
 """
 
 import argparse
+import logging
 
+import yaml
 from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
 from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.gym_gridverse as gym_gridverse_interface
-import yaml
 from online_pomdp_planning_experiments.experiment import run_episode
 
 
@@ -32,10 +35,15 @@ def main():
     global_parser.add_argument("solution_method", choices=["mcts", "po-uct"])
     global_parser.add_argument("conf")
 
+    global_parser.add_argument("-v", "--verbose", action="store_true")
+
     args, overwrites = global_parser.parse_known_args()
 
     with open(args.conf, "rb") as conf_file:
         conf = yaml.load(conf_file, Loader=SafeLoader)
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
 
     # overwrite `conf` with additional key=value parameters in `overwrites`
     for overwrite in overwrites:

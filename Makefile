@@ -1,7 +1,7 @@
 format:
-	isort gridverse_experiment.py online_pomdp_planning_experiments
-	black gridverse_experiment.py online_pomdp_planning_experiments
+	isort gridverse_experiment.py flat_pomdp_experiment.py online_pomdp_planning_experiments
+	black gridverse_experiment.py flat_pomdp_experiment.py online_pomdp_planning_experiments
 
 lint:
-	flake8 gridverse_experiment.py online_pomdp_planning_experiments
-	pylint gridverse_experiment.py online_pomdp_planning_experiments
+	flake8 gridverse_experiment.py flat_pomdp_experiment.py online_pomdp_planning_experiments
+	pylint gridverse_experiment.py flat_pomdp_experiment.py online_pomdp_planning_experiments

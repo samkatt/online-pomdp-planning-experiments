@@ -5,5 +5,12 @@ profile = "black"
 ignore_missing_imports = true
 
 [tool.pylint.messages_control]
-disable = ["C0103", "C0301", "R0913"]
+disable = [
+    "C0103",
+    "R0913",
+    "R0801",  # allow 'similar lines'
+    "R0913",
+]
 max-line-length = 120
+
+[tool.pyright]

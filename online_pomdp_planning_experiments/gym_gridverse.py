@@ -1,7 +1,4 @@
-"""Runs an experiment on gridverse
-
-Provides all necessary functionality, such as creating planners and beliefs.
-"""
+"""Functionality to interface with [gym-gridverse](git@github.com/abaisero/gym-gridverse.git)"""
 
 from operator import eq
 from typing import Any, Tuple
@@ -33,6 +30,11 @@ class GymGridverseEnvironment(Environment):
         obs = self._env.observation
 
         return obs, reward, terminal
+
+    @property
+    def state(self) -> Any:
+        """Part of :class:`Environment` interface"""
+        return self._env.state.agent
 
 
 def create_rejection_sampling(env: InnerEnv, n: int) -> belief_types.Belief:
@@ -73,7 +75,11 @@ def create_pouct(
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
 
-    sim = create_observation_based_simulator(env)
+    def sim(s, a):
+        next_state, reward, terminal = env.functional_step(s, a)
+        obs = env.functional_observation(next_state)
+
+        return next_state, obs, reward, terminal
 
     return create_POUCT(
         env.action_space.actions,
@@ -86,16 +92,3 @@ def create_pouct(
         discount_factor=discount_factor,
         progress_bar=True,
     )
-
-
-def create_observation_based_simulator(env: InnerEnv) -> planning_types.Simulator:
-    """Transforms ``env`` into the correct signature for observation-based (POMDP) planners"""
-
-    def sim(s, a):
-        """The expected protocol for planners"""
-        next_state, reward, terminal = env.functional_step(s, a)
-        obs = env.functional_observation(next_state)
-
-        return next_state, obs, reward, terminal
-
-    return sim
