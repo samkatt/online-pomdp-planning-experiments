@@ -12,18 +12,22 @@ config files by appending any call with overwriting values, for example::
 
     python flat_pomdp_experiment.py conf/flat_pomdp/1d.pomdp po-uct conf/solutions/pouct_example.yaml num_sims=128
 
-Also accepts optional keyword '-v'
+Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), and `-o` (`--out_file`)
 """
 
 import argparse
+import itertools
 import logging
+import pickle
+from functools import partial
 
+import pandas as pd
 import yaml
 from gym_pomdps.envs.pomdp import POMDP
 from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.flat_pomdps as flat_pomdps_interface
-from online_pomdp_planning_experiments.experiment import run_episode
+from online_pomdp_planning_experiments.experiment import run_experiment
 from online_pomdp_planning_experiments.flat_pomdps import FlatPOMDPEnvironment
 
 
@@ -37,6 +41,8 @@ def main():
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
+    global_parser.add_argument("-n", "--num_runs", type=int, default=1)
+    global_parser.add_argument("-o", "--out_file", type=str, default="")
 
     args, overwrites = global_parser.parse_known_args()
 
@@ -62,14 +68,18 @@ def main():
         belief = flat_pomdps_interface.create_rejection_sampling(
             flat_pomdp, conf["num_particles"]
         )
+        episode_reset = partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)
     else:
         raise ValueError("Unsupported solution method {args.solution_method}")
 
-    run_episode(
-        env,
-        planner,
-        belief,
-    )
+    runtime_info = run_experiment(env, planner, belief, episode_reset, args.num_runs)
+
+    if args.out_file:
+        with open(args.out_file, "wb") as save_file:
+            pickle.dump(
+                {"meta": conf, "data": pd.DataFrame(itertools.chain(*runtime_info))},
+                save_file,
+            )
 
 
 if __name__ == "__main__":

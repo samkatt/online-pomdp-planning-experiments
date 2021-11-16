@@ -7,9 +7,12 @@ ignore_missing_imports = true
 [tool.pylint.messages_control]
 disable = [
     "C0103",
-    "R0913",
     "R0801",  # allow 'similar lines'
-    "R0913",
+    "R0903",  # allow 'too few public methods'
+    "R0913",  # allow 'too many arguments'
+    "R0914",  # allow 'too many loca variables'
+    "W0613",  # allow 'unused arguments'
+    "W1514",  # allow 'unspecified encoding'
 ]
 max-line-length = 120
 

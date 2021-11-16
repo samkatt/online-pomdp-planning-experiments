@@ -86,3 +86,16 @@ def create_pouct(
         discount_factor=discount_factor,
         progress_bar=True,
     )
+
+
+def reset_belief(
+    planner: planning_types.Planner, belief: belief_types.Belief, env: POMDP
+) -> None:
+    """Resets the ``belief`` to prior state distribution of ``env``
+    Implements :class:`EpisodeResetter`
+
+    :param planner: ignored
+    :param belief: its distribution is reset
+    :param env: it's functional reset is used to reset ``belief``
+    """
+    belief.distribution = env.reset_functional
