@@ -1,5 +1,5 @@
 num_sims: 64 # number of simulations to run (positive int)
-ucb_constant: 2 # exploration constant used by MCTS (positive float)
+ucb_constant: 2. # exploration constant used by MCTS (positive float)
 horizon: 100 # length of problem (positive int)
 rollout_depth: 10 # length of rollouts to evaluate leafs (positive int)
 max_tree_depth: 100 # max depth of tree (positive int)

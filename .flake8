@@ -1,2 +1,4 @@
 [flake8]
+ignore =
+    E731   # allow lambda
 max-line-length = 120

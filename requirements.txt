@@ -1,6 +1,7 @@
-online_pomdp_planning @ git+ssh://git@github.com/samkatt/online-pomdp-planning.git@feature/learn-state-based-models
+online_pomdp_planning @ git+ssh://git@github.com/samkatt/online-pomdp-planning.git@feature/state-based-pouct
 pyyaml
 gym_gridverse @ git+ssh://git@github.com/abaisero/gym-gridverse.git@master
 pomdp_belief_tracking @ git+ssh://git@github.com/samkatt/pomdp-belief-tracking.git@main
 gym_pomdps @ git+ssh://git@github.com/abaisero/gym-pomdps.git@master
 pandas
+scipy

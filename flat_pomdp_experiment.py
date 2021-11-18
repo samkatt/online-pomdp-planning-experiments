@@ -37,7 +37,7 @@ def main():
     global_parser = argparse.ArgumentParser()
 
     global_parser.add_argument("domain_file")
-    global_parser.add_argument("solution_method", choices=["mcts", "po-uct"])
+    global_parser.add_argument("solution_method", choices=["po-uct", "po-zero"])
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
@@ -63,13 +63,17 @@ def main():
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
 
+    # create belief (common to all solution methods so far)
+    belief = flat_pomdps_interface.create_rejection_sampling(
+        flat_pomdp, conf["num_particles"], conf["show_progress_bar"]
+    )
+    episode_reset = [partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)]
+
     # create solution method
     if args.solution_method == "po-uct":
         planner = flat_pomdps_interface.create_pouct(flat_pomdp, **conf)
-        belief = flat_pomdps_interface.create_rejection_sampling(
-            flat_pomdp, conf["num_particles"], conf["show_progress_bar"]
-        )
-        episode_reset = partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)
+    elif args.solution_method == "po-zero":
+        planner = flat_pomdps_interface.create_po_zero(flat_pomdp, **conf)
     else:
         raise ValueError("Unsupported solution method {args.solution_method}")
 

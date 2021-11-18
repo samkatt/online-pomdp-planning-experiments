@@ -36,7 +36,7 @@ def main():
     global_parser = argparse.ArgumentParser()
 
     global_parser.add_argument("domain_yaml")
-    global_parser.add_argument("solution_method", choices=["mcts", "po-uct"])
+    global_parser.add_argument("solution_method", choices=["po-uct"])
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
@@ -67,9 +67,9 @@ def main():
         belief = gym_gridverse_interface.create_rejection_sampling(
             gym_gridverse_inner_env, conf["num_particles"], conf["show_progress_bar"]
         )
-        episode_reset = partial(
-            gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env
-        )
+        episode_reset = [
+            partial(gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env)
+        ]
     else:
         raise ValueError("Unsupported solution method {args.solution_method}")
 

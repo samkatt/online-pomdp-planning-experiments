@@ -55,6 +55,7 @@ def run_episode(
         obs, reward, terminal = env.step(action)
         belief_info = belief.update(action, obs)
 
+        print(planning_info)
         logging.debug("A(%s) => S(%s) with r(%f)", action, env.state, reward)
         runtime_info.append(
             {"planning": planning_info, "belief": belief_info, "reward": reward}
@@ -68,12 +69,12 @@ def run_experiment(
     env: Environment,
     planner: Planner,
     belief: Belief,
-    reset_episode: Callable[[Planner, Belief], None],
+    reset_episode: List[Callable[[Planner, Belief], None]],
     num_episodes: int,
 ) -> List[Dict[str, Any]]:
     """Runs ``num_runs`` :func:`run_episode`
 
-    :param reset_episode: Called on ``planner`` and ``belief`` at the end of each episode
+    :param reset_episode: List of function called with ``planner`` and ``belief`` at the end of each episode
     :return: str => info dictionaries for each time step (for each episode)
     """
     runtime_info = []
@@ -88,6 +89,7 @@ def run_experiment(
 
         runtime_info.extend(episode_info)
 
-        reset_episode(planner, belief)
+        for f in reset_episode:
+            f(planner, belief)
 
     return runtime_info

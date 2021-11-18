@@ -7,9 +7,9 @@ import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
 from gym_gridverse.envs.inner_env import InnerEnv
+from online_pomdp_planning.mcts import create_POUCT
 
 from online_pomdp_planning_experiments.experiment import Environment
-from online_pomdp_planning_experiments.scratch_planners import create_POUCT
 
 
 class GymGridverseEnvironment(Environment):
