@@ -52,7 +52,9 @@ def create_rejection_sampling(
 
         return next_state, obs
 
-    accept_func = RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
+    accept_func: RS.ProcessAccepted = (
+        RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
+    )
 
     return belief_types.Belief(
         env.functional_reset,
@@ -68,7 +70,7 @@ def create_pouct(
     rollout_depth: int,
     max_tree_depth: int,
     discount_factor: float,
-    show_progress_bar: bool,
+    verbose: bool,
     **_,
 ) -> planning_types.Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner
@@ -94,7 +96,7 @@ def create_pouct(
         rollout_depth=rollout_depth,
         max_tree_depth=max_tree_depth,
         discount_factor=discount_factor,
-        progress_bar=show_progress_bar,
+        progress_bar=verbose,
     )
 
 

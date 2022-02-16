@@ -12,16 +12,18 @@ config files by appending any call with overwriting values, for example::
 
     python gridverse_experiment.py conf/gridverse/gv_empty.8x8.yaml po-uct conf/solutions/pouct_example.yaml num_sims=32
 
-Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), and `-o` (`--out_file`)
+Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), `-o`
+(`--out_file`), and `-w` (`--wandb`). Where `--wandb` refers to a file such as
+in `conf/wandb_conf.yaml`
 """
 
 import argparse
-import itertools
 import logging
 import pickle
 from functools import partial
 
 import pandas as pd
+import wandb
 import yaml
 from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
 from yaml.loader import SafeLoader
@@ -35,37 +37,50 @@ def main():
 
     global_parser = argparse.ArgumentParser()
 
-    global_parser.add_argument("domain_yaml")
-    global_parser.add_argument("solution_method", choices=["po-uct"])
+    global_parser.add_argument("domain_file")
+    global_parser.add_argument(
+        "solution_method", choices=["po-uct", "po-zero-state", "po-zero-history"]
+    )
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
     global_parser.add_argument("-n", "--num_runs", type=int, default=1)
     global_parser.add_argument("-o", "--out_file", type=str, default="")
+    global_parser.add_argument("--wandb", help="Path to wandb configuration file")
 
     args, overwrites = global_parser.parse_known_args()
 
+    # load configurations: load, overwrite, and handle logging
     with open(args.conf, "rb") as conf_file:
         conf = yaml.load(conf_file, Loader=SafeLoader)
 
-    # overwrite `conf` with additional key=value parameters in `overwrites`
+    conf.update(vars(args))
+
     for overwrite in overwrites:
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
 
-    conf["show_progress_bar"] = args.verbose
-    if args.verbose:
+    if conf["verbose"]:
         logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    if conf["wandb"]:
+        with open(conf["wandb"]) as f:
+            wandb_conf = yaml.load(f, Loader=SafeLoader)
+            wandb.init(config=conf, **wandb_conf)
+        conf.update(wandb_conf)
 
     # load domain
     gym_gridverse_inner_env = factory_env_from_yaml(args.domain_yaml)
     env = gym_gridverse_interface.GymGridverseEnvironment(gym_gridverse_inner_env)
+    log_metrics = lambda info: None
 
     # create solution method
     if args.solution_method == "po-uct":
         planner = gym_gridverse_interface.create_pouct(gym_gridverse_inner_env, **conf)
         belief = gym_gridverse_interface.create_rejection_sampling(
-            gym_gridverse_inner_env, conf["num_particles"], conf["show_progress_bar"]
+            gym_gridverse_inner_env, conf["num_particles"], conf["verbose"]
         )
         episode_reset = [
             partial(gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env)
@@ -73,12 +88,14 @@ def main():
     else:
         raise ValueError("Unsupported solution method {args.solution_method}")
 
-    runtime_info = run_experiment(env, planner, belief, episode_reset, args.num_runs)
+    runtime_info = run_experiment(
+        env, planner, belief, episode_reset, log_metrics, args.num_runs
+    )
 
-    if args.out_file:
-        with open(args.out_file, "wb") as save_file:
+    if conf["out_file"]:
+        with open(conf["out_file"], "wb") as save_file:
             pickle.dump(
-                {"meta": conf, "data": pd.DataFrame(itertools.chain(*runtime_info))},
+                {"configurations": conf, "data": pd.DataFrame(runtime_info)},
                 save_file,
             )
 

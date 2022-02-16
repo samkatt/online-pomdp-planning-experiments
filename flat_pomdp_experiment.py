@@ -1,8 +1,9 @@
 """Entrypoint of experiments on online POMDP planners on flat POMDPs
 
 Functions as a gateway to the different experiments. Accepts a domain file,
-then specifies the type of solution method, followed by solution method
-specific cofigurations. For example, to run MCTS (MDP) online planning::
+then specifies the type of solution method (in `[po-uct, po-zero-state,
+    po-zero-history]`), followed by solution method specific cofigurations. For
+example, to run MCTS (MDP) online planning::
 
     python flat_pomdp_experiment.py conf/flat_pomdp/tiger.pomdp po-uct conf/solutions/pouct_example.yaml
 
@@ -12,23 +13,26 @@ config files by appending any call with overwriting values, for example::
 
     python flat_pomdp_experiment.py conf/flat_pomdp/1d.pomdp po-uct conf/solutions/pouct_example.yaml num_sims=128
 
-Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), and `-o` (`--out_file`)
+Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), `-o`
+(`--out_file`), and `-w` (`--wandb`). Where `--wandb` refers to a file such as
+in `conf/wandb_conf.yaml`
 """
 
 import argparse
-import itertools
 import logging
 import pickle
 from functools import partial
+from typing import Any, Dict, List
 
 import pandas as pd
+import wandb
 import yaml
 from gym_pomdps.envs.pomdp import POMDP
 from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.flat_pomdps as flat_pomdps_interface
+import online_pomdp_planning_experiments.models.tabular as tabular_models
 from online_pomdp_planning_experiments.experiment import run_experiment
-from online_pomdp_planning_experiments.flat_pomdps import FlatPOMDPEnvironment
 
 
 def main():
@@ -37,52 +41,89 @@ def main():
     global_parser = argparse.ArgumentParser()
 
     global_parser.add_argument("domain_file")
-    global_parser.add_argument("solution_method", choices=["po-uct", "po-zero"])
+    global_parser.add_argument(
+        "solution_method", choices=["po-uct", "po-zero-state", "po-zero-history"]
+    )
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
     global_parser.add_argument("-n", "--num_runs", type=int, default=1)
     global_parser.add_argument("-o", "--out_file", type=str, default="")
+    global_parser.add_argument("--wandb", help="Path to wandb configuration file")
 
     args, overwrites = global_parser.parse_known_args()
 
+    # load configurations: load, overwrite, and handle logging
     with open(args.conf, "rb") as conf_file:
         conf = yaml.load(conf_file, Loader=SafeLoader)
 
-    # overwrite `conf` with additional key=value parameters in `overwrites`
+    conf.update(vars(args))
+
     for overwrite in overwrites:
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
 
-    # load domain
-    with open(args.domain_file, "r") as f:
-        flat_pomdp = POMDP(f.read(), episodic=True)
-    env = FlatPOMDPEnvironment(flat_pomdp)
-
-    conf["show_progress_bar"] = args.verbose
-    if args.verbose:
+    if conf["verbose"]:
         logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    if conf["wandb"]:
+        with open(conf["wandb"]) as f:
+            wandb_conf = yaml.load(f, Loader=SafeLoader)
+            wandb.init(config=conf, **wandb_conf)
+        conf.update(wandb_conf)
+
+    # load domain
+    with open(conf["domain_file"], "r") as f:
+        flat_pomdp = POMDP(f.read(), episodic=True)
+    env = flat_pomdps_interface.FlatPOMDPEnvironment(flat_pomdp)
 
     # create belief (common to all solution methods so far)
     belief = flat_pomdps_interface.create_rejection_sampling(
-        flat_pomdp, conf["num_particles"], conf["show_progress_bar"]
+        flat_pomdp, conf["num_particles"], conf["verbose"]
     )
     episode_reset = [partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)]
+    metric_loggers = []
+
+    if conf["wandb"]:
+        metric_loggers.append(flat_pomdps_interface.log_episode_to_wandb)
 
     # create solution method
-    if args.solution_method == "po-uct":
+    if conf["solution_method"] == "po-uct":
         planner = flat_pomdps_interface.create_pouct(flat_pomdp, **conf)
-    elif args.solution_method == "po-zero":
-        planner = flat_pomdps_interface.create_po_zero(flat_pomdp, **conf)
+    elif conf["solution_method"] == "po-zero-state":
+        planner = flat_pomdps_interface.create_pouct_with_models(
+            flat_pomdp, tabular_models.create_state_models, **conf
+        )
+
+        if conf["wandb"]:
+            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
+
+    elif conf["solution_method"] == "po-zero-history":
+        planner = flat_pomdps_interface.create_pouct_with_models(
+            flat_pomdp, tabular_models.create_history_models, **conf
+        )
+
+        if conf["wandb"]:
+            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
+
     else:
-        raise ValueError("Unsupported solution method {args.solution_method}")
+        raise ValueError("Unsupported solution method {'solution_method'}")
 
-    runtime_info = run_experiment(env, planner, belief, episode_reset, args.num_runs)
+    # create single log-metric call
+    def log_metrics(info: List[Dict[str, Any]]) -> None:
+        for f in metric_loggers:
+            f(info)
 
-    if args.out_file:
-        with open(args.out_file, "wb") as save_file:
+    runtime_info = run_experiment(
+        env, planner, belief, episode_reset, log_metrics, conf["num_runs"]
+    )
+
+    if conf["out_file"]:
+        with open(conf["out_file"], "wb") as save_file:
             pickle.dump(
-                {"meta": conf, "data": pd.DataFrame(itertools.chain(*runtime_info))},
+                {"configurations": conf, "data": pd.DataFrame(runtime_info)},
                 save_file,
             )
 

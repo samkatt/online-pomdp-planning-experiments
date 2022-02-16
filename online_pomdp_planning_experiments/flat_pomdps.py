@@ -1,19 +1,20 @@
 """Functionality to interface with [flat POMDPs](github.com/abaisero/gym-pomdps.git)"""
-from collections import Counter
-from operator import eq
-from typing import Any, Tuple
 
-import numpy as np
+from functools import partial
+from operator import eq
+from typing import Any, Dict, List, Optional, Tuple
+
 import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
+import wandb
 from gym_pomdps.envs.pomdp import POMDP
-from online_pomdp_planning.mcts import create_POUCT
-from scipy.special import logsumexp, softmax
+from online_pomdp_planning import mcts
 
-from online_pomdp_planning_experiments.experiment import Environment
-from online_pomdp_planning_experiments.scratch_planners import (
-    create_POUCT_with_state_models,
+from online_pomdp_planning_experiments.experiment import (
+    Environment,
+    HashableHistory,
+    Planner,
 )
 
 
@@ -32,7 +33,7 @@ class FlatPOMDPEnvironment(Environment):
     def step(self, action) -> Tuple[Any, float, bool]:
         """Part of :class:`Environment` interface"""
         obs, reward, terminal, _ = self._pomdp.step(action)
-        return obs, reward, terminal
+        return obs, reward, terminal  # type: ignore
 
     @property
     def state(self) -> Any:
@@ -53,7 +54,9 @@ def create_rejection_sampling(
         next_state, obs, *_ = env.step_functional(s, a)
         return next_state, obs
 
-    accept_func = RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
+    accept_func: RS.ProcessAccepted = (
+        RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
+    )
 
     return belief_types.Belief(
         env.reset_functional,
@@ -69,9 +72,9 @@ def create_pouct(
     rollout_depth: int,
     max_tree_depth: int,
     discount_factor: float,
-    show_progress_bar: bool,
+    verbose: bool,
     **_,
-) -> planning_types.Planner:
+) -> Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner
 
     Uses ``env`` as simulator for its planning, the other input are parameters
@@ -84,7 +87,7 @@ def create_pouct(
         next_state, obs, reward, terminal, _ = env.step_functional(s, a)
         return next_state, obs, reward, terminal
 
-    return create_POUCT(
+    library_planner = mcts.create_POUCT(
         list(range(env.action_space.n)),
         sim,
         num_sims,
@@ -93,29 +96,23 @@ def create_pouct(
         rollout_depth=rollout_depth,
         max_tree_depth=max_tree_depth,
         discount_factor=discount_factor,
-        progress_bar=show_progress_bar,
+        progress_bar=verbose,
     )
 
-
-Policy = np.ndarray
-"""A policy type: a mapping between action (int) and their probability"""
-
-StateValueModel = np.ndarray
-"""A state-value model type: a mapping from state (int) to their value (float)"""
-
-StatePriorModel = np.ndarray
-"""A state-prior model type: a mapping from state (int) to their policy"""
+    return lambda b, _: library_planner(b)
 
 
-def create_po_zero(
+def create_pouct_with_models(
     env: POMDP,
+    model_constructor,  # create_state_models or create_history_models
     num_sims: int,
     ucb_constant: float,
     max_tree_depth: int,
+    learning_rate: float,
     discount_factor: float,
-    show_progress_bar: bool,
+    verbose: bool,
     **_,
-) -> planning_types.Planner:
+) -> Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner using state-based model
 
     The state based model for flat POMDPs is tabular and starts with zero value
@@ -124,97 +121,97 @@ def create_po_zero(
     Uses ``env`` as simulator for its planning, the other input are parameters
     to the planner.
 
+    Note that the ``model_constructor`` really is just a way to use different
+    models (e.g. state or history based)
+
+    :param model_constructor: must be :func:`create_state_models` or :func:`create_history_models`
+    :param learning_rate: the learning rate used to update models in between
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
+    action_list = list(range(env.action_space.n))
+    model_inference, model_update, root_action_stats = model_constructor(
+        env, learning_rate
+    )
+
+    # stop condition: keep track of `pbar` if `progress_bar` is set
+    pbar = mcts.no_stop
+    if verbose:
+        pbar = mcts.ProgressBar(num_sims)
+    real_stop_cond = partial(mcts.has_simulated_n_times, num_sims)
 
     def sim(s, a):
         next_state, obs, reward, terminal, _ = env.step_functional(s, a)
         return next_state, obs, reward, terminal
 
-    state_values = np.zeros(env.state_space.n)
-    state_prior = np.ones((env.state_space.n, env.action_space.n)) * (
-        1 / env.action_space.n
+    def stop_condition(info: planning_types.Info) -> bool:
+        return real_stop_cond(info) or pbar(info)
+
+    node_scoring_method = partial(mcts.alphazero_ucb_scores, ucb_constant=ucb_constant)
+    leaf_select = partial(
+        mcts.select_leaf_by_max_scores, sim, node_scoring_method, max_tree_depth
     )
 
-    def state_model(s):
-        return state_values[s], dict(enumerate(state_prior[s]))
+    backprop = partial(mcts.backprop_running_q, discount_factor)
+    action_select = mcts.max_q_action_selector
 
-    planner = create_POUCT_with_state_models(
-        list(range(env.action_space.n)),
-        sim,
-        num_sims,
-        state_based_model=state_model,
-        ucb_constant=ucb_constant,
-        max_tree_depth=max_tree_depth,
-        discount_factor=discount_factor,
-        progress_bar=show_progress_bar,
-    )
+    def planner(belief: planning_types.Belief, history: HashableHistory):
 
-    def plan_and_update(belief: planning_types.Belief):
-        """Calls and return ``planner`` but capture runtime info for state-model updates"""
-        action, info = planner(belief)
+        def evaluate_and_expand_model(
+            node: Optional[mcts.ActionNode],
+            s: planning_types.State,
+            o: Optional[planning_types.Observation],
+            info: planning_types.Info,
+        ) -> Tuple[float, mcts.ActionStats]:
 
-        # generate targets
-        belief_value = info["max_q_action_selector-values"][0][1]
+            hist = list(history)
+            if node:
+                hist.extend(node.parent.history())
 
-        q_stat = info["q_statistic"]
-        policy = softmax(
-            [q_stat.normalize(q) for _, q in info["max_q_action_selector-values"]]
+            return model_inference(tuple(hist), s)
+
+        def tree_constructor(
+            belief: planning_types.Belief,
+            info: planning_types.Info,
+        ) -> mcts.ObservationNode:
+            """Custom-made tree constructor"""
+            stats = root_action_stats(belief, history, info)
+
+            root = mcts.create_root_node_with_child_for_all_actions(
+                belief, info, action_list, stats
+            )
+
+            return root
+
+        leaf_eval = partial(
+            mcts.expand_and_evaluate_with_model, model=evaluate_and_expand_model
         )
 
-        update_state_value(state_values, belief_value, belief, 100)
-        update_state_prior(state_prior, policy, belief, 100)
+        return mcts.mcts(
+            stop_condition,
+            tree_constructor,
+            leaf_select,
+            leaf_eval,
+            backprop,
+            action_select,
+            belief,
+        )
 
-        print(f"Believe value: {belief_value}")
+    def plan_and_update(belief: planning_types.Belief, history: HashableHistory):
+        """Calls and return ``planner`` but capture runtime info for state-model updates
+
+        Follows :data:`Planner` protocol
+
+        :param history: ignored
+        """
+        action, info = planner(belief, history)
+        model_update(belief, history, info)
 
         return action, info
 
     return plan_and_update
 
 
-def update_state_value(
-    model: StateValueModel,
-    target_value: float,
-    belief: planning_types.Belief,
-    n: int,
-    alpha: float = 0.001,
-):
-    """Updates ``model`` to be closer to ``target_value`` with respect to ``belief``
-
-    :param n: number of (state) updates to do
-    :param alpha: how much to update ``model`` with
-    :return: None, updates ``model`` in-place
-    """
-    for s, p in Counter(belief() for _ in range(n)).items():
-        model[s] += p * alpha * (target_value - model[s])  # type: ignore
-
-
-def update_state_prior(
-    model: StatePriorModel,
-    pol: Policy,
-    belief: planning_types.Belief,
-    n: int,
-    alpha: float = 0.001,
-):
-    """Updates ``model`` to be closer to ``pol`` with respect to ``belief
-
-    There is mostly just converting from action => probability mappings to
-    numpy arrays for some quicker computations.
-
-    Minimizes KL divergence between ``pol`` and ``model``:
-
-    :param n: number of (state) updates to consider
-    :param alpha: how much to update ``model`` with
-    :return: None, updates ``model`` in-place
-    """
-    for s, p in Counter(belief() for _ in range(n)).items():
-        new_log_prob = np.log(model[s]) + p * alpha * pol
-        model[s] = np.exp(new_log_prob - logsumexp(new_log_prob))
-
-
-def reset_belief(
-    planner: planning_types.Planner, belief: belief_types.Belief, env: POMDP
-) -> None:
+def reset_belief(planner: Planner, belief: belief_types.Belief, env: POMDP) -> None:
     """Resets the ``belief`` to prior state distribution of ``env``
     Implements :class:`EpisodeResetter`
 
@@ -223,3 +220,43 @@ def reset_belief(
     :param env: it's functional reset is used to reset ``belief``
     """
     belief.distribution = env.reset_functional
+
+
+def log_episode_to_wandb(episode_info: List[Dict[str, Any]]):
+    """Logs basic statistics for flat POMDPs solutions to wandb"""
+
+    episode = episode_info[0]["episode"]
+    ret = sum(info["reward"] for info in episode_info)
+    initial_root_value = max(
+        stats["qval"] for stats in episode_info[0]["tree_root_stats"].values()
+    )
+
+    wandb.log(
+        {
+            "return": ret,
+            "episode": episode,
+            "initial_root_value": initial_root_value,
+        },
+        step=episode,
+    )
+
+
+def log_predictions_to_wandb(episode_info: List[Dict[str, Any]]):
+    """Logs predictions for flat POMDPs solutions to wandb"""
+    episode = episode_info[0]["episode"]
+
+    intitial_value_prediction = episode_info[0]["root_value_prediction"]
+    intitial_prior_prediction = episode_info[0]["root_action_prior"]
+    value_losses = [info["value_prediction_loss"] for info in episode_info]
+    prior_losses = [info["prior_prediction_loss"] for info in episode_info]
+
+    wandb.log(
+        {
+            "value_prediction_loss": wandb.Histogram(value_losses),
+            "prior_prediction_loss": wandb.Histogram(prior_losses),
+            "initital_value_prediction": intitial_value_prediction,
+            "intitial_prior_prediction": wandb.Histogram(intitial_prior_prediction),
+            "episode": episode,
+        },
+        step=episode,
+    )

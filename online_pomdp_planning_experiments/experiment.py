@@ -1,10 +1,21 @@
 """Main file for running experiments"""
 
+import itertools
 import logging
 from typing import Any, Callable, Dict, List, Protocol, Tuple
 
-from online_pomdp_planning.types import Planner
-from pomdp_belief_tracking.types import Belief
+import online_pomdp_planning.types as planning_types
+import pomdp_belief_tracking.types as belief_types
+
+HashableHistory = Tuple[planning_types.ActionObservation, ...]
+"""The action-observation history as a tuple"""
+
+
+Planner = Callable[
+    [planning_types.Belief, HashableHistory],
+    Tuple[planning_types.Action, planning_types.Info],
+]
+"""A planner in these experiments maps a belief and/or history to action and info"""
 
 
 class Environment(Protocol):
@@ -19,6 +30,7 @@ class Environment(Protocol):
         :param action: whatever type used to act in the world
         :return: (observation, reward, terminal)
         """
+        raise NotImplementedError()
 
     @property
     def state(self) -> Any:
@@ -26,14 +38,14 @@ class Environment(Protocol):
 
 
 class EpisodeResetter(Protocol):
-    """The type that resets the planner or belief inbetween episodes"""
+    """The type that resets the planner or belief in between episodes"""
 
-    def __call__(self, planner: Planner, belief: Belief) -> None:
+    def __call__(self, planner: Planner, belief: belief_types.Belief) -> None:
         """Resets ``planner`` and/or ``belief"""
 
 
 def run_episode(
-    env: Environment, planner: Planner, belief: Belief
+    env: Environment, planner: Planner, belief: belief_types.Belief
 ) -> List[Dict[str, Any]]:
     """Runs an episode in ``env`` using ``planner`` to pick actions and ``belief`` for state estimation
 
@@ -42,51 +54,60 @@ def run_episode(
 
     # to be generated and returned
     runtime_info = []
-
-    terminal = False
+    history: planning_types.History = []
 
     env.reset()
 
-    logging.debug("Start at S(%s)", env.state)
+    logging.info("Start at S(%s)", env.state)
 
-    while not terminal:
+    for t in itertools.count():
 
-        action, planning_info = planner(belief.sample)
+        action, planning_info = planner(belief.sample, tuple(history))
         obs, reward, terminal = env.step(action)
         belief_info = belief.update(action, obs)
 
-        print(planning_info)
-        logging.debug("A(%s) => S(%s) with r(%f)", action, env.state, reward)
-        runtime_info.append(
-            {"planning": planning_info, "belief": belief_info, "reward": reward}
+        logging.info(
+            "A(%s) => S(%s) with o(%s) and r(%f)", action, env.state, obs, reward
         )
 
-    logging.debug("Total reward: %.2f", sum(t["reward"] for t in runtime_info))
+        runtime_info.append(
+            {**planning_info, **belief_info, "reward": reward, "timestep": t}
+        )
+        history.append(planning_types.ActionObservation(action, obs))
+
+        if terminal:
+            break
+
+    logging.info("Total reward: %.2f", sum(t["reward"] for t in runtime_info))
+
     return runtime_info
 
 
 def run_experiment(
     env: Environment,
     planner: Planner,
-    belief: Belief,
-    reset_episode: List[Callable[[Planner, Belief], None]],
+    belief: belief_types.Belief,
+    reset_episode: List[Callable[[Planner, belief_types.Belief], None]],
+    log_metrics: Callable[[List[Dict[str, Any]]], None],
     num_episodes: int,
 ) -> List[Dict[str, Any]]:
     """Runs ``num_runs`` :func:`run_episode`
 
     :param reset_episode: List of function called with ``planner`` and ``belief`` at the end of each episode
+    :param log_metrics: Called after each episode with the resulting run time information
     :return: str => info dictionaries for each time step (for each episode)
     """
     runtime_info = []
 
     for episode in range(num_episodes):
 
-        logging.debug("Running episode %d", episode)
+        logging.info("Running episode %d", episode)
         episode_info = run_episode(env, planner, belief)
 
         for info in episode_info:
             info["episode"] = episode
 
+        log_metrics(episode_info)
         runtime_info.extend(episode_info)
 
         for f in reset_episode:

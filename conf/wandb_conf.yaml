@@ -1,0 +1,3 @@
+project: test-wandb-project # the project name in wandb
+entity: skatt # user/team name on wandb
+group: example-group # group name in wandb (extra organizational power)
