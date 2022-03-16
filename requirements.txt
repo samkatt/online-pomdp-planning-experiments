@@ -1,4 +1,4 @@
-online_pomdp_planning @ git+ssh://git@github.com/samkatt/online-pomdp-planning.git@fix/cleanup
+online_pomdp_planning @ git+ssh://git@github.com/samkatt/online-pomdp-planning.git@master
 pyyaml
 gym_gridverse @ git+ssh://git@github.com/abaisero/gym-gridverse.git@master
 pomdp_belief_tracking @ git+ssh://git@github.com/samkatt/pomdp-belief-tracking.git@main
