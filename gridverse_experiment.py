@@ -23,12 +23,12 @@ import pickle
 from functools import partial
 
 import pandas as pd
-import wandb
 import yaml
 from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
 from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.gym_gridverse as gym_gridverse_interface
+import wandb
 from online_pomdp_planning_experiments.experiment import run_experiment
 
 

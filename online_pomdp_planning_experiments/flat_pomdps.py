@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
-import wandb
 from gym_pomdps.envs.pomdp import POMDP
 from online_pomdp_planning import mcts
 
+import wandb
 from online_pomdp_planning_experiments.experiment import (
     Environment,
     HashableHistory,
@@ -128,9 +128,11 @@ def create_pouct_with_models(
     :param learning_rate: the learning rate used to update models in between
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
-    action_list = list(range(env.action_space.n))
+    states = range(env.state_space.n)
+    actions = range(env.action_space.n)
+
     model_inference, model_update, root_action_stats = model_constructor(
-        env, learning_rate
+        states, actions, learning_rate
     )
 
     # stop condition: keep track of `pbar` if `progress_bar` is set
@@ -155,7 +157,6 @@ def create_pouct_with_models(
     action_select = mcts.max_q_action_selector
 
     def planner(belief: planning_types.Belief, history: HashableHistory):
-
         def evaluate_and_expand_model(
             node: Optional[mcts.ActionNode],
             s: planning_types.State,
@@ -176,9 +177,7 @@ def create_pouct_with_models(
             """Custom-made tree constructor"""
             stats = root_action_stats(belief, history, info)
 
-            root = mcts.create_root_node_with_child_for_all_actions(
-                belief, info, action_list, stats
-            )
+            root = mcts.create_root_node_with_child_for_all_actions(belief, info, stats)
 
             return root
 

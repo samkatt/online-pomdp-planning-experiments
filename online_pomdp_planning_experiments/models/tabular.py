@@ -5,7 +5,6 @@ from typing import Dict
 
 import numpy as np
 import online_pomdp_planning.types as planning_types
-from gym_pomdps.envs.pomdp import POMDP
 from scipy.special import softmax
 
 from online_pomdp_planning_experiments.experiment import HashableHistory
@@ -18,23 +17,37 @@ StateValueModel = np.ndarray
 """A state-value model type: a mapping from state (int) to their value (float)"""
 
 
-def create_state_models(env: POMDP, learning_rate: float, batch_size: int = 100):
+def create_state_models(states, actions, learning_rate: float, batch_size: int = 100):
     """Creates the 'inference' and 'update' for state models
 
+    The biggest 'challenge' here is trying to map between indices and
+    state/actions. We assume there is some set of states and actions, maintain
+    a _sorted_ list of them, and translate manually.
+
+    :param states: generator that spits out all states in the environment
+    :param actions: generator that spits out all actions in the environment
     :param batch_size: number of 'state' updates to do from 'belief'
     """
 
-    state_values = np.zeros(env.state_space.n)
-    state_prior = np.ones((env.state_space.n, env.action_space.n)) / env.action_space.n
+    # state `i` <==> `state_list[i]`
+    state_list = sorted(list(states))
+    # action `i` <==> `action_list[i]`
+    action_list = sorted(list(actions))
 
-    def model_inference(hist: HashableHistory, state: planning_types.State):
+    num_s = len(state_list)
+    num_a = len(action_list)
+
+    state_values = np.zeros(num_s)
+    state_prior = np.ones((num_s, num_a)) / num_a
+
+    def model_inference(hist: HashableHistory, state: int):
         """Performs inference on ``state``, ignores ``hist`` but included for API purposes"""
         v = state_values[state]
         prior = state_prior[state]
 
         stats = {
-            a: {"prior": prior[a], "n": 1, "qval": 0.0}
-            for a in range(env.action_space.n)
+            a: {"prior": prior[i], "n": 1, "qval": 0.0}
+            for i, a in enumerate(action_list)
         }
 
         return v, stats
@@ -45,9 +58,12 @@ def create_state_models(env: POMDP, learning_rate: float, batch_size: int = 100)
         info: planning_types.Info,
         num_samples: int = 10,
     ):
-        """Performs update given ``belief``, ignores ``history`` but included for API purposes"""
+        """Performs update given ``belief``, ignores ``history`` but included for API purposes
 
-        q_vals = [info["tree_root_stats"][a]["qval"] for a in sorted(info["tree_root_stats"])]
+        :param belief: assumes sampling from this produces ``int`` things!!
+        """
+
+        q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
         target_value = max(q_vals)
         target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
 
@@ -82,7 +98,7 @@ def create_state_models(env: POMDP, learning_rate: float, batch_size: int = 100)
 
         Populates ``info`` with "root_value_prediction" and "root_action_prior"
 
-        :param belief: sampled from to get an average prior and value prediction
+        :param belief: sampled (``int``!!) from to get an average prior and value prediction
         :param history: ignored, included for API purposes
         """
 
@@ -90,11 +106,14 @@ def create_state_models(env: POMDP, learning_rate: float, batch_size: int = 100)
         info["root_value_prediction"] = np.mean(
             [state_values[belief()] for _ in range(num_samples)]
         )
-        info["root_action_prior"] = np.mean(
-            [state_prior[belief()] for _ in range(num_samples)], axis=0
-        )
 
-        return lambda a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
+        prior = np.mean([state_prior[belief()] for _ in range(num_samples)], axis=0)
+        info["root_action_prior"] = {a: prior[i] for i, a in enumerate(action_list)}
+
+        return {
+            a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
+            for a in action_list
+        }
 
     return model_inference, model_update, root_action_stats
 
@@ -107,22 +126,34 @@ HistoryPriorModel = Dict[HashableHistory, np.ndarray]
 """A history-prior model: maps histories to policies"""
 
 
-def create_history_models(env: POMDP, learning_rate: float):
-    """Creates the 'inference' and 'update' for history models"""
+def create_history_models(states, actions, learning_rate: float):
+    """Creates the 'inference' and 'update' for history models
+
+    The biggest 'challenge' here is trying to map between indices and
+    state/actions. We assume there is some set of states and actions, maintain
+    a _sorted_ list of them, and translate manually.
+
+    :param states: ignored, here to adhere to interface with ``create_state_models``
+    :param actions: generator that spits out all actions in the environment
+    """
+    # action `i` <==> `action_list[i]`
+    action_list = sorted(list(actions))
+    num_a = len(action_list)
 
     history_values: HistoryValueModel = defaultdict(lambda: 0)
-    history_prior: HistoryPriorModel = defaultdict(
-        lambda: np.ones(env.action_space.n) / env.action_space.n
-    )
+    history_prior: HistoryPriorModel = defaultdict(lambda: np.ones(num_a) / num_a)
 
     def model_inference(hist: HashableHistory, state: planning_types.State):
-        """Performs inference on ``hist``, ignores ``state`` but included for API purposes"""
+        """Performs inference on ``hist``, ignores ``state`` but included for API purposes
+
+        :param state: ignored
+        """
         v = history_values[hist]
         prior = history_prior[hist]
 
         stats = {
-            a: {"prior": prior[a], "n": 1, "qval": 0.0}
-            for a in range(env.action_space.n)
+            a: {"prior": prior[i], "n": 1, "qval": 0.0}
+            for i, a in enumerate(action_list)
         }
 
         return v, stats
@@ -134,8 +165,7 @@ def create_history_models(env: POMDP, learning_rate: float):
     ):
         """Performs update given ``history``, , ignores ``belief`` but included for API purposes"""
 
-        q_vals = [info["tree_root_stats"][a]["qval"] for a in sorted(info["tree_root_stats"])]
-
+        q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
         target_value = max(q_vals)
         target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
 
@@ -172,7 +202,10 @@ def create_history_models(env: POMDP, learning_rate: float):
         info["root_value_prediction"] = history_values[history]
         info["root_action_prior"] = history_prior[history]
 
-        return lambda a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
+        return {
+            a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
+            for a in action_list
+        }
 
     return model_inference, model_update, root_action_stats
 

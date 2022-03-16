@@ -25,13 +25,13 @@ from functools import partial
 from typing import Any, Dict, List
 
 import pandas as pd
-import wandb
 import yaml
 from gym_pomdps.envs.pomdp import POMDP
 from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.flat_pomdps as flat_pomdps_interface
 import online_pomdp_planning_experiments.models.tabular as tabular_models
+import wandb
 from online_pomdp_planning_experiments.experiment import run_experiment
 
 
