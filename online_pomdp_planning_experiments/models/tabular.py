@@ -1,7 +1,8 @@
 """Basic definitions for tabular/dictionary models"""
 
 from collections import Counter, defaultdict
-from typing import Dict
+from functools import partial
+from typing import Dict, List, NamedTuple
 
 import numpy as np
 import online_pomdp_planning.types as planning_types
@@ -9,15 +10,202 @@ from scipy.special import softmax
 
 from online_pomdp_planning_experiments.experiment import HashableHistory
 
-StatePriorModel = np.ndarray
-"""A state-prior model type: a mapping from state (int) to their policy"""
+
+class StateValueModel:
+    """A state-based value model
+
+    Infers from- and updates values based on their state
+    """
+
+    def __init__(self, num_states: int):
+        """Initiates a state-based value model
+
+         It initiates values to zero.
+
+        :param num_states: assumed number of states (> 0)
+        """
+        assert num_states > 0
+        self._values = np.zeros(num_states)
+
+    def infer(self, state: int) -> float:
+        """Computes estimated value of ``state``
+
+        :param state: thing to get value of
+        :return: estimated return
+        """
+        return self._values[state]
+
+    def update(self, state: int, target: float, learning_rate: float):
+        """Updates the estimated value of ``state`` towards ``target``
+
+        Uses :func:`minimize_squared_error` under the hood
+
+        :param state: thing to update value of
+        :param target: value should move towards this
+        :param learning_rate: the step size [0,1]
+        """
+        self._values[state] = minimize_squared_error(
+            target, self._values[state], alpha=learning_rate
+        )
+
+    def loss(self, state: int, target: float) -> float:
+        """Computes loss of model for ``state`` given ``target`` value
+
+        Returns squared error between estimated value and target
+
+        Uses :func:`square_error` under the hood
+
+        :param state: thing to update value of
+        :param target: target value that should be compared to
+        :return: (target - estimate)^2
+        """
+        return square_error(target, self.infer(state))
 
 
-StateValueModel = np.ndarray
-"""A state-value model type: a mapping from state (int) to their value (float)"""
+class StatePolicyModel:
+    """A state-based (prior) policy model
+
+    Infers from- and updates policies based on states
+    """
+
+    def __init__(self, num_states: int, num_actions: int):
+        """Initiates a state-based policy model
+
+         It initiates policy to uniform.
+
+        :param num_states: assumed number of states (> 0)
+        :param num_actions: assumed number of actions (> 0)
+        """
+        assert num_states > 0 and num_actions > 0
+
+        self._policy = np.ones((num_states, num_actions)) / num_actions
+
+    def infer(self, state: int) -> np.ndarray:
+        """Computes estimated policy of ``state``
+
+        :param state: thing to get policy of
+        :return: array where element i represents p(a_i) (sums to 1)
+        """
+        return self._policy[state]
+
+    def update(self, state: int, target: np.ndarray, learning_rate: float):
+        """Updates the estimated policy of ``state`` towards ``target``
+
+        Uses :func:`minimize_kl` to minimize the KL divergence between
+        predicted policy and ``target``.
+
+        :param state: thing to update policy of
+        :param target: policy should move towards this
+        :param learning_rate: the step size [0,1]
+        """
+        self._policy[state] = minimize_kl(target, self._policy[state], learning_rate)
+
+    def loss(self, state: int, target: np.ndarray) -> float:
+        """Computes loss of model for ``state`` given ``target`` policy
+
+        Returns KL divergence between estimated policy and target
+
+        Uses :func:`kl_divergence` under the hood
+
+        :param state: thing to update value of
+        :param target: target value that should be compared to
+        :return: `KL_div(target, state)`
+        """
+        return kl_divergence(target, self.infer(state))
 
 
-def create_state_models(states, actions, learning_rate: float, batch_size: int = 100):
+class StateValuePriorModel(NamedTuple):
+    """Pairs a state-based value and policy model"""
+
+    value_model: StateValueModel
+    prior: StatePolicyModel
+
+
+def state_model_inference(
+    model: StateValuePriorModel,
+    action_list: List[planning_types.Action],
+    history: HashableHistory,
+    state: int,
+):
+    """Performs inference on ``state``, ignores ``history`` but included for API purposes"""
+    # TODO: doc and test
+    v = model.value_model.infer(state)
+    prior = model.prior.infer(state)
+
+    stats = {
+        a: {"prior": prior[i], "n": 0, "qval": 0.0} for i, a in enumerate(action_list)
+    }
+
+    return v, stats
+
+
+def state_model_update(
+    model: StateValuePriorModel,
+    action_list: List[planning_types.Action],
+    learning_rate: float,
+    num_samples: int,
+    batch_size: int,
+    belief: planning_types.Belief,
+    history: HashableHistory,
+    info: planning_types.Info,
+):
+    """Performs update given ``belief``, ignores ``history`` but included for API purposes
+
+    :param belief: assumes sampling from this produces ``int`` things!!
+    :param batch_size: number of 'state' updates to do from 'belief'
+    """
+    # TODO: doc and test
+
+    # compute targets
+    q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
+    target_value = max(q_vals)
+    target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
+
+    info["value_prediction_loss"] = np.mean(
+        [model.value_model.loss(belief(), target_value) for _ in range(num_samples)]
+    )
+
+    info["prior_prediction_loss"] = np.mean(
+        [model.prior.loss(belief(), target_policy) for _ in range(num_samples)]
+    )
+
+    # update models
+    for s, p in Counter(belief() for _ in range(batch_size)).items():
+        model.value_model.update(s, target_value, learning_rate=learning_rate * p)
+        model.prior.update(s, target_policy, learning_rate=learning_rate * p)
+
+
+def state_root_action_stats(
+    model: StateValuePriorModel,
+    action_list: List[planning_types.Action],
+    num_samples: int,
+    belief: planning_types.Belief,
+    history: HashableHistory,
+    info: planning_types.Info,
+):
+    """Creates a function that returns statistics associated with actions in root
+
+    Populates ``info`` with "root_value_prediction"
+
+    :param belief: sampled (``int``!!) from to get an average prior and value prediction
+    :param history: ignored, included for API purposes
+    """
+    # TODO: doc and test
+
+    # record info
+    info["root_value_prediction"] = np.mean(
+        [model.value_model.infer(belief()) for _ in range(num_samples)]
+    )
+    prior = np.mean([model.prior.infer(belief()) for _ in range(num_samples)], axis=0)
+
+    return {
+        a: {"qval": 0.0, "prior": prior[i], "n": 0} for i, a in enumerate(action_list)
+    }
+
+
+def create_state_models(
+    states, actions, learning_rate: float, batch_size: int = 100, num_samples=100
+):
     """Creates the 'inference' and 'update' for state models
 
     The biggest 'challenge' here is trying to map between indices and
@@ -27,103 +215,218 @@ def create_state_models(states, actions, learning_rate: float, batch_size: int =
     :param states: generator that spits out all states in the environment
     :param actions: generator that spits out all actions in the environment
     :param batch_size: number of 'state' updates to do from 'belief'
+    :param num_samples: number of samples used to estimate loss
     """
-
-    # state `i` <==> `state_list[i]`
-    state_list = sorted(list(states))
     # action `i` <==> `action_list[i]`
     action_list = sorted(list(actions))
-
-    num_s = len(state_list)
+    num_s = len(list(states))
     num_a = len(action_list)
 
-    state_values = np.zeros(num_s)
-    state_prior = np.ones((num_s, num_a)) / num_a
+    model = StateValuePriorModel(StateValueModel(num_s), StatePolicyModel(num_s, num_a))
 
-    def model_inference(hist: HashableHistory, state: int):
-        """Performs inference on ``state``, ignores ``hist`` but included for API purposes"""
-        v = state_values[state]
-        prior = state_prior[state]
+    model_inference = partial(state_model_inference, model, action_list)
 
-        stats = {
-            a: {"prior": prior[i], "n": 1, "qval": 0.0}
-            for i, a in enumerate(action_list)
-        }
+    model_update = partial(
+        state_model_update,
+        model,
+        action_list,
+        learning_rate,
+        num_samples,
+        batch_size,
+    )
 
-        return v, stats
-
-    def model_update(
-        belief: planning_types.Belief,
-        history: HashableHistory,
-        info: planning_types.Info,
-        num_samples: int = 10,
-    ):
-        """Performs update given ``belief``, ignores ``history`` but included for API purposes
-
-        :param belief: assumes sampling from this produces ``int`` things!!
-        """
-
-        q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
-        target_value = max(q_vals)
-        target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
-
-        info["value_prediction_loss"] = np.power(
-            [target_value - state_values[belief()] for _ in range(num_samples)], 2
-        ).mean()
-
-        info["prior_prediction_loss"] = np.mean(
-            [
-                kl_divergence(target_policy, state_prior[belief()])
-                for _ in range(num_samples)
-            ]
-        )
-
-        # update models
-        for s, p in Counter(belief() for _ in range(batch_size)).items():
-            state_values[s] = minimize_squared_error(
-                target_value, state_values[s], alpha=learning_rate * p
-            )
-        for s, p in Counter(belief() for _ in range(batch_size)).items():
-            state_prior[s] = minimize_kl(
-                target_policy, state_prior[s], learning_rate * p
-            )
-
-    def root_action_stats(
-        belief: planning_types.Belief,
-        history: HashableHistory,
-        info: planning_types.Info,
-        num_samples: int = 10,
-    ):
-        """Creates a function that returns statistics associated with actions in root
-
-        Populates ``info`` with "root_value_prediction" and "root_action_prior"
-
-        :param belief: sampled (``int``!!) from to get an average prior and value prediction
-        :param history: ignored, included for API purposes
-        """
-
-        # record info
-        info["root_value_prediction"] = np.mean(
-            [state_values[belief()] for _ in range(num_samples)]
-        )
-
-        prior = np.mean([state_prior[belief()] for _ in range(num_samples)], axis=0)
-        info["root_action_prior"] = {a: prior[i] for i, a in enumerate(action_list)}
-
-        return {
-            a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
-            for a in action_list
-        }
+    root_action_stats = partial(
+        state_root_action_stats, model, action_list, num_samples
+    )
 
     return model_inference, model_update, root_action_stats
 
 
-HistoryValueModel = Dict[HashableHistory, float]
-"""A history-value model type: maps histories to values"""
+class HistoryValueModel:
+    """A history-based value model
+
+    Infers from- and updates values based on their history
+    """
+
+    def __init__(self):
+        """Initiates a history-based value model
+
+        Note it does not need to 'know' anything- it will store and map to
+        histories on the fly. It initiates values to zero.
+        """
+        self._values: Dict[HashableHistory, float] = defaultdict(lambda: 0)
+
+    def infer(self, history: HashableHistory) -> float:
+        """Computes estimated value of ``history``
+
+        :param history: thing to get value of
+        :return: estimated return
+        """
+        return self._values[history]
+
+    def update(self, history: HashableHistory, target: float, learning_rate: float):
+        """Updates the estimated value of ``history`` towards ``target``
+
+        Uses :func:`minimize_squared_error` under the hood
+
+        :param history: thing to update value of
+        :param target: value should move towards this
+        :param learning_rate: the step size [0,1]
+        """
+        self._values[history] = minimize_squared_error(
+            target, self._values[history], alpha=learning_rate
+        )
+
+    def loss(self, history: HashableHistory, target: float) -> float:
+        """Computes loss of model for ``history`` given ``target`` value
+
+        Returns squared error between estimated value and target
+
+        Uses :func:`square_error` under the hood
+
+        :param history: thing to update value of
+        :param target: target value that should be compared to
+        :return: (target - estimate)^2
+        """
+        return square_error(target, self.infer(history))
 
 
-HistoryPriorModel = Dict[HashableHistory, np.ndarray]
-"""A history-prior model: maps histories to policies"""
+class HistoryPolicyModel:
+    """A history-based (prior) policy model
+
+    Infers from- and updates policies based on history
+    """
+
+    def __init__(self, num_actions: int):
+        """Initiates a state-based policy model
+
+        Note it does not need to 'know' anything about histories- it will store
+        and map to them on the fly. It initiates policy to uniform.
+
+        :param num_actions: assumed number of actions (> 0)
+        """
+        assert num_actions > 0
+
+        self._policy: Dict[HashableHistory, np.ndarray] = defaultdict(
+            lambda: np.ones(num_actions) / num_actions
+        )
+
+    def infer(self, history: HashableHistory) -> np.ndarray:
+        """Computes estimated policy of ``history``
+
+        :param history: thing to get policy of
+        :return: array where element i represents p(a_i) (sums to 1)
+        """
+        return self._policy[history]
+
+    def update(
+        self, history: HashableHistory, target: np.ndarray, learning_rate: float
+    ):
+        """Updates the estimated policy of ``history`` towards ``target``
+
+        Uses :func:`minimize_kl` to minimize the KL divergence between
+        predicted policy and ``target``.
+
+        :param history: thing to update policy of
+        :param target: policy should move towards this
+        :param learning_rate: the step size [0,1]
+        """
+        self._policy[history] = minimize_kl(
+            target, self._policy[history], learning_rate
+        )
+
+    def loss(self, history: HashableHistory, target: np.ndarray) -> float:
+        """Computes loss of model for ``history`` given ``target`` policy
+
+        Returns KL divergence between estimated policy and target
+
+        Uses :func:`kl_divergence` under the hood
+
+        :param history: thing to update value of
+        :param target: target value that should be compared to
+        :return: `KL_div(target, state)`
+        """
+        return kl_divergence(target, self.infer(history))
+
+
+class HistoryValuePriorModel(NamedTuple):
+    """Pairs a history-based value and policy model"""
+
+    value_model: HistoryValueModel
+    prior: HistoryPolicyModel
+
+
+def history_model_inference(
+    model: HistoryValuePriorModel,
+    action_list: List[planning_types.Action],
+    hist: HashableHistory,
+    state: planning_types.State,
+):
+    """Performs inference on ``hist``, ignores ``state`` but included for API purposes
+
+    :param state: ignored
+    """
+    # TODO: doc and test
+
+    v = model.value_model.infer(hist)
+    prior = model.prior.infer(hist)
+
+    stats = {
+        a: {"prior": prior[i], "n": 1, "qval": 0.0} for i, a in enumerate(action_list)
+    }
+
+    return v, stats
+
+
+def history_model_update(
+    model: HistoryValuePriorModel,
+    action_list: List[planning_types.Action],
+    learning_rate: float,
+    belief: planning_types.Belief,
+    history: HashableHistory,
+    info: planning_types.Info,
+):
+    """Performs update given ``history``, , ignores ``belief`` but included for API purposes"""
+    # TODO: doc and test
+
+    # compute targets
+    q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
+    target_value = max(q_vals)
+    target_policy = softmax(q_vals)
+    # target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
+
+    # store model info
+    info["value_prediction_loss"] = model.value_model.loss(history, target_value)
+    info["prior_prediction_loss"] = model.prior.loss(history, target_policy)
+
+    # update models
+    model.value_model.update(history, target_value, learning_rate)
+    model.prior.update(history, target_policy, learning_rate)
+
+
+def history_root_action_stats(
+    model: HistoryValuePriorModel,
+    action_list: List[planning_types.Action],
+    belief: planning_types.Belief,
+    history: HashableHistory,
+    info: planning_types.Info,
+):
+    """Creates a function that returns statistics associated with actions in root
+
+    Populates ``info`` with "root_value_prediction"
+
+    :param belief: ignored, included for API purposes
+    :param history: used to infer prior and value
+    """
+    # TODO: doc and test
+
+    # record info
+    info["root_value_prediction"] = model.value_model.infer(history)
+    prior = model.prior.infer(history)
+
+    return {
+        a: {"qval": 0.0, "prior": prior[i], "n": 1} for i, a in enumerate(action_list)
+    }
 
 
 def create_history_models(states, actions, learning_rate: float):
@@ -140,72 +443,11 @@ def create_history_models(states, actions, learning_rate: float):
     action_list = sorted(list(actions))
     num_a = len(action_list)
 
-    history_values: HistoryValueModel = defaultdict(lambda: 0)
-    history_prior: HistoryPriorModel = defaultdict(lambda: np.ones(num_a) / num_a)
+    model = HistoryValuePriorModel(HistoryValueModel(), HistoryPolicyModel(num_a))
 
-    def model_inference(hist: HashableHistory, state: planning_types.State):
-        """Performs inference on ``hist``, ignores ``state`` but included for API purposes
-
-        :param state: ignored
-        """
-        v = history_values[hist]
-        prior = history_prior[hist]
-
-        stats = {
-            a: {"prior": prior[i], "n": 1, "qval": 0.0}
-            for i, a in enumerate(action_list)
-        }
-
-        return v, stats
-
-    def model_update(
-        belief: planning_types.Belief,
-        history: HashableHistory,
-        info: planning_types.Info,
-    ):
-        """Performs update given ``history``, , ignores ``belief`` but included for API purposes"""
-
-        q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
-        target_value = max(q_vals)
-        target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
-
-        # store model info
-        info["value_prediction_loss"] = square_error(
-            target_value, history_values[history]
-        )
-        info["prior_prediction_loss"] = kl_divergence(
-            target_policy, history_prior[history]
-        )
-
-        # update models
-        history_values[history] = minimize_squared_error(
-            target_value, history_values[history], learning_rate
-        )
-        history_prior[history] = minimize_kl(
-            target_policy, history_prior[history], learning_rate
-        )
-
-    def root_action_stats(
-        belief: planning_types.Belief,
-        history: HashableHistory,
-        info: planning_types.Info,
-    ):
-        """Creates a function that returns statistics associated with actions in root
-
-        Populates ``info`` with "root_value_prediction" and "root_action_prior"
-
-        :param belief: ignored, included for API purposes
-        :param history: used to infer prior and value
-        """
-
-        # record info
-        info["root_value_prediction"] = history_values[history]
-        info["root_action_prior"] = history_prior[history]
-
-        return {
-            a: {"qval": 0.0, "prior": info["root_action_prior"][a], "n": 1}
-            for a in action_list
-        }
+    model_inference = partial(history_model_inference, model, action_list)
+    model_update = partial(history_model_update, model, action_list, learning_rate)
+    root_action_stats = partial(history_root_action_stats, model, action_list)
 
     return model_inference, model_update, root_action_stats
 

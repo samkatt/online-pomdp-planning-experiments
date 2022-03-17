@@ -1,4 +1,6 @@
 [flake8]
 ignore =
     E731   # allow lambda
+    E741   # allow ambiguous variable name
+
 max-line-length = 120

@@ -1,9 +1,10 @@
 """Main file for running experiments"""
 
-import itertools
 import logging
+import random
 from typing import Any, Callable, Dict, List, Protocol, Tuple
 
+import numpy as np
 import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.types as belief_types
 
@@ -45,12 +46,13 @@ class EpisodeResetter(Protocol):
 
 
 def run_episode(
-    env: Environment, planner: Planner, belief: belief_types.Belief
+    env: Environment, planner: Planner, belief: belief_types.Belief, horizon: int
 ) -> List[Dict[str, Any]]:
     """Runs an episode in ``env`` using ``planner`` to pick actions and ``belief`` for state estimation
 
     :return: str => info dictionaries for each time step
     """
+    assert horizon > 0
 
     # to be generated and returned
     runtime_info = []
@@ -60,7 +62,7 @@ def run_episode(
 
     logging.info("Start at S(%s)", env.state)
 
-    for t in itertools.count():
+    for t in range(horizon):
 
         action, planning_info = planner(belief.sample, tuple(history))
         obs, reward, terminal = env.step(action)
@@ -90,6 +92,7 @@ def run_experiment(
     reset_episode: List[Callable[[Planner, belief_types.Belief], None]],
     log_metrics: Callable[[List[Dict[str, Any]]], None],
     num_episodes: int,
+    horizon: int,
 ) -> List[Dict[str, Any]]:
     """Runs ``num_runs`` :func:`run_episode`
 
@@ -102,7 +105,7 @@ def run_experiment(
     for episode in range(num_episodes):
 
         logging.info("Running episode %d", episode)
-        episode_info = run_episode(env, planner, belief)
+        episode_info = run_episode(env, planner, belief, horizon)
 
         for info in episode_info:
             info["episode"] = episode
@@ -114,3 +117,9 @@ def run_experiment(
             f(planner, belief)
 
     return runtime_info
+
+
+def set_random_seed(seed: int):
+    """Sets the random seed of this run"""
+    random.seed(seed)
+    np.random.seed(seed)

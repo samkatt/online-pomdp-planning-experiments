@@ -80,6 +80,7 @@ def create_pouct(
     Uses ``env`` as simulator for its planning, the other input are parameters
     to the planner.
 
+    :param action_select: either "q-values" or "visitations"
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
 
@@ -111,6 +112,7 @@ def create_pouct_with_models(
     learning_rate: float,
     discount_factor: float,
     verbose: bool,
+    action_selection: str,
     **_,
 ) -> Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner using state-based model
@@ -126,6 +128,7 @@ def create_pouct_with_models(
 
     :param model_constructor: must be :func:`create_state_models` or :func:`create_history_models`
     :param learning_rate: the learning rate used to update models in between
+    :param action_selection: in ["max_q", "max_visits", or "visits_prob"]
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
     states = range(env.state_space.n)
@@ -154,7 +157,14 @@ def create_pouct_with_models(
     )
 
     backprop = partial(mcts.backprop_running_q, discount_factor)
-    action_select = mcts.max_q_action_selector
+
+    if action_selection == "max_q":
+        action_select = mcts.max_q_action_selector
+    elif action_selection == "max_visits":
+        action_select = mcts.max_visits_action_selector
+    else:
+        assert action_selection == "visits_prob"
+        action_select = mcts.visit_prob_action_selector
 
     def planner(belief: planning_types.Belief, history: HashableHistory):
         def evaluate_and_expand_model(
@@ -245,17 +255,27 @@ def log_predictions_to_wandb(episode_info: List[Dict[str, Any]]):
     episode = episode_info[0]["episode"]
 
     intitial_value_prediction = episode_info[0]["root_value_prediction"]
-    intitial_prior_prediction = episode_info[0]["root_action_prior"]
     value_losses = [info["value_prediction_loss"] for info in episode_info]
     prior_losses = [info["prior_prediction_loss"] for info in episode_info]
+    initial_q_values = {
+        a: stats["qval"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+    initial_prior_prediction = {
+        a: stats["prior"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+    initial_visitations = {
+        a: stats["n"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
 
     wandb.log(
         {
             "value_prediction_loss": wandb.Histogram(value_losses),
             "prior_prediction_loss": wandb.Histogram(prior_losses),
             "initital_value_prediction": intitial_value_prediction,
-            "intitial_prior_prediction": wandb.Histogram(intitial_prior_prediction),
+            "intitial_prior_prediction": initial_prior_prediction,
             "episode": episode,
+            "initial_q_values": initial_q_values,
+            "initial_visitations": initial_visitations,
         },
         step=episode,
     )

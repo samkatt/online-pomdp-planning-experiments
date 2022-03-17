@@ -13,8 +13,8 @@ config files by appending any call with overwriting values, for example::
     python gridverse_experiment.py conf/gridverse/gv_empty.8x8.yaml po-uct conf/solutions/pouct_example.yaml num_sims=32
 
 Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), `-o`
-(`--out_file`), and `-w` (`--wandb`). Where `--wandb` refers to a file such as
-in `conf/wandb_conf.yaml`
+(`--out_file`), `--seed`, and `-w` (`--wandb`). Where `--wandb` refers to a
+file such as in `conf/wandb_conf.yaml`
 """
 
 import argparse
@@ -29,7 +29,7 @@ from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.gym_gridverse as gym_gridverse_interface
 import wandb
-from online_pomdp_planning_experiments.experiment import run_experiment
+from online_pomdp_planning_experiments.experiment import run_experiment, set_random_seed
 
 
 def main():
@@ -45,6 +45,11 @@ def main():
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
     global_parser.add_argument("-n", "--num_runs", type=int, default=1)
+    global_parser.add_argument(
+        "--seed",
+        type=int,
+        help="A way to ensure runs will _not_ have the same output, does not reproduce",
+    )
     global_parser.add_argument("-o", "--out_file", type=str, default="")
     global_parser.add_argument("--wandb", help="Path to wandb configuration file")
 
@@ -59,6 +64,9 @@ def main():
     for overwrite in overwrites:
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
+
+    if conf["seed"]:
+        set_random_seed(conf["seed"])
 
     if conf["verbose"]:
         logging.basicConfig(level=logging.DEBUG)
@@ -77,7 +85,7 @@ def main():
     log_metrics = lambda info: None
 
     # create solution method
-    if args.solution_method == "po-uct":
+    if conf["solution_method"] == "po-uct":
         planner = gym_gridverse_interface.create_pouct(gym_gridverse_inner_env, **conf)
         belief = gym_gridverse_interface.create_rejection_sampling(
             gym_gridverse_inner_env, conf["num_particles"], conf["verbose"]
@@ -86,10 +94,16 @@ def main():
             partial(gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env)
         ]
     else:
-        raise ValueError("Unsupported solution method {args.solution_method}")
+        raise ValueError("Unsupported solution method {conf['solution_method']}")
 
     runtime_info = run_experiment(
-        env, planner, belief, episode_reset, log_metrics, args.num_runs
+        env,
+        planner,
+        belief,
+        episode_reset,
+        log_metrics,
+        conf["num_runs"],
+        conf["horizon"],
     )
 
     if conf["out_file"]:

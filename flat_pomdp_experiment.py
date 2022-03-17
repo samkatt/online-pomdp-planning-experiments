@@ -14,8 +14,8 @@ config files by appending any call with overwriting values, for example::
     python flat_pomdp_experiment.py conf/flat_pomdp/1d.pomdp po-uct conf/solutions/pouct_example.yaml num_sims=128
 
 Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), `-o`
-(`--out_file`), and `-w` (`--wandb`). Where `--wandb` refers to a file such as
-in `conf/wandb_conf.yaml`
+(`--out_file`), `--seed`, and `-w` (`--wandb`). Where `--wandb` refers to a
+file such as in `conf/wandb_conf.yaml`
 """
 
 import argparse
@@ -32,7 +32,7 @@ from yaml.loader import SafeLoader
 import online_pomdp_planning_experiments.flat_pomdps as flat_pomdps_interface
 import online_pomdp_planning_experiments.models.tabular as tabular_models
 import wandb
-from online_pomdp_planning_experiments.experiment import run_experiment
+from online_pomdp_planning_experiments.experiment import run_experiment, set_random_seed
 
 
 def main():
@@ -48,6 +48,11 @@ def main():
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
     global_parser.add_argument("-n", "--num_runs", type=int, default=1)
+    global_parser.add_argument(
+        "--seed",
+        type=int,
+        help="A way to ensure runs will _not_ have the same output, does not reproduce",
+    )
     global_parser.add_argument("-o", "--out_file", type=str, default="")
     global_parser.add_argument("--wandb", help="Path to wandb configuration file")
 
@@ -62,6 +67,9 @@ def main():
     for overwrite in overwrites:
         overwritten_key, overwritten_value = overwrite.split("=")
         conf[overwritten_key] = type(conf[overwritten_key])(overwritten_value)
+
+    if conf["seed"]:
+        set_random_seed(conf["seed"])
 
     if conf["verbose"]:
         logging.basicConfig(level=logging.DEBUG)
@@ -92,24 +100,22 @@ def main():
     # create solution method
     if conf["solution_method"] == "po-uct":
         planner = flat_pomdps_interface.create_pouct(flat_pomdp, **conf)
-    elif conf["solution_method"] == "po-zero-state":
-        planner = flat_pomdps_interface.create_pouct_with_models(
-            flat_pomdp, tabular_models.create_state_models, **conf
-        )
-
-        if conf["wandb"]:
-            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
-
-    elif conf["solution_method"] == "po-zero-history":
-        planner = flat_pomdps_interface.create_pouct_with_models(
-            flat_pomdp, tabular_models.create_history_models, **conf
-        )
-
-        if conf["wandb"]:
-            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
 
     else:
-        raise ValueError("Unsupported solution method {'solution_method'}")
+
+        if conf["wandb"]:
+            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
+
+        if conf["solution_method"] == "po-zero-state":
+            model_creator = tabular_models.create_state_models
+        elif conf["solution_method"] == "po-zero-history":
+            model_creator = tabular_models.create_history_models
+        else:
+            raise ValueError("Unsupported solution method {'solution_method'}")
+
+        planner = flat_pomdps_interface.create_pouct_with_models(
+            flat_pomdp, model_creator, **conf
+        )
 
     # create single log-metric call
     def log_metrics(info: List[Dict[str, Any]]) -> None:
@@ -117,7 +123,13 @@ def main():
             f(info)
 
     runtime_info = run_experiment(
-        env, planner, belief, episode_reset, log_metrics, conf["num_runs"]
+        env,
+        planner,
+        belief,
+        episode_reset,
+        log_metrics,
+        conf["num_runs"],
+        conf["horizon"],
     )
 
     if conf["out_file"]:
