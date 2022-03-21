@@ -9,8 +9,10 @@ disable = [
     "C0103",
     "R0801",  # allow 'similar lines'
     "R0903",  # allow 'too few public methods'
+    "R0912",  # allow 'too-many-branches'
     "R0913",  # allow 'too many arguments'
-    "R0914",  # allow 'too many loca variables'
+    "R0914",  # allow 'too many local variables'
+    "R0915",  # allow 'too-many-branches'
     "W0613",  # allow 'unused arguments'
     "W1514",  # allow 'unspecified encoding'
 ]

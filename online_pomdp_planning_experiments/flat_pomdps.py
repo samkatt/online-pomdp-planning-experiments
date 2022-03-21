@@ -16,6 +16,10 @@ from online_pomdp_planning_experiments.experiment import (
     HashableHistory,
     Planner,
 )
+from online_pomdp_planning_experiments.mcts_extensions import (
+    max_prior_action_selector,
+    prior_prob_action_selector,
+)
 
 
 class FlatPOMDPEnvironment(Environment):
@@ -103,6 +107,25 @@ def create_pouct(
     return lambda b, _: library_planner(b)
 
 
+def create_action_selector(action_selection: str) -> mcts.ActionSelection:
+    """Constructor/factory for the mcts.action_selector
+
+    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
+    """
+    if action_selection == "max_q":
+        return mcts.max_q_action_selector
+    if action_selection == "max_visits":
+        return mcts.max_visits_action_selector
+    if action_selection == "visits_prob":
+        return mcts.visit_prob_action_selector
+    if action_selection == "max_prior":
+        return max_prior_action_selector
+    if action_selection == "prior_prob":
+        return prior_prob_action_selector
+
+    raise ValueError(f"Action selection {action_selection} not viable")
+
+
 def create_pouct_with_models(
     env: POMDP,
     model_constructor,  # create_state_models or create_history_models
@@ -128,7 +151,7 @@ def create_pouct_with_models(
 
     :param model_constructor: must be :func:`create_state_models` or :func:`create_history_models`
     :param learning_rate: the learning rate used to update models in between
-    :param action_selection: in ["max_q", "max_visits", or "visits_prob"]
+    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
     states = range(env.state_space.n)
@@ -157,14 +180,7 @@ def create_pouct_with_models(
     )
 
     backprop = partial(mcts.backprop_running_q, discount_factor)
-
-    if action_selection == "max_q":
-        action_select = mcts.max_q_action_selector
-    elif action_selection == "max_visits":
-        action_select = mcts.max_visits_action_selector
-    else:
-        assert action_selection == "visits_prob"
-        action_select = mcts.visit_prob_action_selector
+    action_select = create_action_selector(action_selection)
 
     def planner(belief: planning_types.Belief, history: HashableHistory):
         def evaluate_and_expand_model(
