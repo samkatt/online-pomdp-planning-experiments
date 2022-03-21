@@ -159,7 +159,7 @@ def state_model_update(
     # compute targets
     q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
     target_value = max(q_vals)
-    target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
+    target_policy = softmax(q_vals)
 
     info["value_prediction_loss"] = np.mean(
         [model.value_model.loss(belief(), target_value) for _ in range(num_samples)]
@@ -393,7 +393,6 @@ def history_model_update(
     q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
     target_value = max(q_vals)
     target_policy = softmax(q_vals)
-    # target_policy = softmax([info["q_statistic"].normalize(q) for q in q_vals])
 
     # store model info
     info["value_prediction_loss"] = model.value_model.loss(history, target_value)
