@@ -110,10 +110,12 @@ def create_pouct(
 def create_action_selector(action_selection: str) -> mcts.ActionSelection:
     """Constructor/factory for the mcts.action_selector
 
-    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
+    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob", "soft_q"]
     """
     if action_selection == "max_q":
         return mcts.max_q_action_selector
+    if action_selection == "soft_q":
+        return mcts.soft_q_action_selector
     if action_selection == "max_visits":
         return mcts.max_visits_action_selector
     if action_selection == "visits_prob":
@@ -151,7 +153,7 @@ def create_pouct_with_models(
 
     :param model_constructor: must be :func:`create_state_models` or :func:`create_history_models`
     :param learning_rate: the learning rate used to update models in between
-    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
+    :param action_selection: in ["max_q", "soft_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
     states = range(env.state_space.n)

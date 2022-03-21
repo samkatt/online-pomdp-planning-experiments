@@ -6,4 +6,4 @@ max_tree_depth: 100 # max depth of tree (positive int)
 discount_factor: 0.99 # discount factor of the discounted return [0,1]
 num_particles: 128  # number of particles to track in belief
 learning_rate: 0.1 # learning rate
-action_selection: "max_q"  # "max_q", "max_visits", or "visits_prob, "max_prior", "prior_prob"
+action_selection: "max_q"  # "max_q", "soft_q", "max_visits", "visits_prob, "max_prior", or "prior_prob"
