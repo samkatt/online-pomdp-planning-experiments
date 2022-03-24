@@ -498,7 +498,8 @@ def minimize_kl(p: np.ndarray, q: np.ndarray, alpha: float = 0.1) -> np.ndarray:
     # But I decided for now to return the new ``q`` values
 
     # q = exp(z) / sum(exp(z))
-    return np.exp(z) / np.sum(np.exp(z))
+    z_exp = np.exp(z)
+    return  z_exp / np.sum(z_exp)
 
 
 def minimize_squared_error(target: float, pred: float, alpha: float = 0.1) -> float:
