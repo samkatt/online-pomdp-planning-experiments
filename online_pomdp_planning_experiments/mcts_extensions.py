@@ -28,13 +28,10 @@ def max_prior_action_selector(
     Populates `info["max_prior_selector-probabilities"]` with prior
 
     """
-    prior = [(k, v["prior"]) for k, v in stats.items()]
-
-    max_prob = max(p for _, p in prior)
-    candidates = [k for k, v in prior if v >= max_prob]
-
+    prior = {k: v["prior"] for k, v in stats.items()}
     info["max_prior_selector-probabilities"] = prior
-    return random.choices(list(candidates))[0]
+
+    return mcts_lib.select_action(stats, info, lambda _, __: prior)
 
 
 def prior_prob_action_selector(
