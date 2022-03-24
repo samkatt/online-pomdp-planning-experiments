@@ -38,9 +38,7 @@ def main():
     global_parser = argparse.ArgumentParser()
 
     global_parser.add_argument("domain_file")
-    global_parser.add_argument(
-        "solution_method", choices=["po-uct", "po-zero-state", "po-zero-history"]
-    )
+    global_parser.add_argument("solution_method", choices=["po-uct", "po-zero"])
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")

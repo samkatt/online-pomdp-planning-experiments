@@ -4,6 +4,7 @@ from functools import partial
 from operator import eq
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
@@ -19,7 +20,9 @@ from online_pomdp_planning_experiments.experiment import (
 from online_pomdp_planning_experiments.mcts_extensions import (
     max_prior_action_selector,
     prior_prob_action_selector,
+    soft_q_model_action_selector,
 )
+from online_pomdp_planning_experiments.models.abstract import Model
 
 
 class FlatPOMDPEnvironment(Environment):
@@ -110,7 +113,10 @@ def create_pouct(
 def create_action_selector(action_selection: str) -> mcts.ActionSelection:
     """Constructor/factory for the mcts.action_selector
 
-    :param action_selection: in ["max_q", "max_visits", or "visits_prob", "max_prior", "prior_prob", "soft_q"]
+    :param action_selection: in [
+            "max_q", "soft_q", "max_q_model", "soft_q_model",
+            "max_visits", or "visits_prob", "max_prior", "prior_prob"
+        ]
     """
     if action_selection == "max_q":
         return mcts.max_q_action_selector
@@ -124,20 +130,30 @@ def create_action_selector(action_selection: str) -> mcts.ActionSelection:
         return max_prior_action_selector
     if action_selection == "prior_prob":
         return prior_prob_action_selector
+    if action_selection == "max_q_model":
+
+        # for brevity we return a function here that simply
+        # gives the {action: q} statistic in ``info`` to
+        # the select action method (which picks the max)
+        return lambda stats, info: mcts.select_action(
+            stats, info, lambda _, __: info["root_q_prediction"]
+        )
+    if action_selection == "soft_q_model":
+        return soft_q_model_action_selector
 
     raise ValueError(f"Action selection {action_selection} not viable")
 
 
 def create_pouct_with_models(
     env: POMDP,
-    model_constructor,  # create_state_models or create_history_models
+    model: Model,
     num_sims: int,
     ucb_constant: float,
     max_tree_depth: int,
-    learning_rate: float,
     discount_factor: float,
     verbose: bool,
     action_selection: str,
+    model_output: str,
     **_,
 ) -> Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner using state-based model
@@ -151,17 +167,28 @@ def create_pouct_with_models(
     Note that the ``model_constructor`` really is just a way to use different
     models (e.g. state or history based)
 
-    :param model_constructor: must be :func:`create_state_models` or :func:`create_history_models`
-    :param learning_rate: the learning rate used to update models in between
-    :param action_selection: in ["max_q", "soft_q", "max_visits", or "visits_prob", "max_prior", "prior_prob"]
+    :param model: determines the type of models (e.g. tabular vs network, q-model vs value and prior)
+    :param action_selection: in [
+            "max_q", "soft_q", "max_q_model", "soft_q_model",
+            "max_visits", or "visits_prob", "max_prior", "prior_prob"
+        ]
+    :param model_output: in ["value_and_prior", "q_values"]
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
-    states = range(env.state_space.n)
-    actions = range(env.action_space.n)
-
-    model_inference, model_update, root_action_stats = model_constructor(
-        states, actions, learning_rate
-    )
+    # basic input validaiton
+    assert num_sims > 0 and ucb_constant > 0 and max_tree_depth > 0
+    assert 0 < discount_factor <= 1
+    assert action_selection in [
+        "max_q",
+        "soft_q",
+        "max_visits",
+        "visits_prob",
+        "max_prior",
+        "prior_prob",
+        "max_q_model",
+        "soft_q_model",
+    ]
+    assert model_output in ["value_and_prior", "q_values"]
 
     # stop condition: keep track of `pbar` if `progress_bar` is set
     pbar = mcts.no_stop
@@ -176,7 +203,30 @@ def create_pouct_with_models(
     def stop_condition(info: planning_types.Info) -> bool:
         return real_stop_cond(info) or pbar(info)
 
-    node_scoring_method = partial(mcts.alphazero_ucb_scores, ucb_constant=ucb_constant)
+    # scoring of nodes during tree search depends on the types of models used
+    # in particular, _if_ there is a prior, we use through `alphazero_ucb_scores`
+    # otherwise, we use regular `ucb_scores`
+    if model_output == "value_and_prior":
+        node_scoring_method = partial(mcts.alphazero_scores, ucb_constant=ucb_constant)
+    else:
+
+        def normalize_q(q, q_stat):
+            if q_stat.min < q_stat.max:
+                return q_stat.normalize(q)
+
+            return q
+
+        # UCB as close to alpha-zero as possible:
+        # normalize(q) + u * sqrt(N)/(n+1)
+        node_scoring_method = partial(
+            mcts.unified_ucb_scores,
+            get_q=lambda s, info: normalize_q(s["qval"], info["q_statistic"]),
+            get_nominator=np.sqrt,
+            get_expl_term=lambda nom, n: nom / (1 + n),
+            get_prior=lambda _: 1,
+            get_base_term=lambda _: ucb_constant,
+        )
+
     leaf_select = partial(
         mcts.select_leaf_by_max_scores, sim, node_scoring_method, max_tree_depth
     )
@@ -199,14 +249,14 @@ def create_pouct_with_models(
                 + [planning_types.ActionObservation(node.action, o)]
             )
 
-            return model_inference(tuple(hist), s)
+            return model.infer_leaf(tuple(hist), s)
 
         def tree_constructor(
             belief: planning_types.Belief,
             info: planning_types.Info,
         ) -> mcts.ObservationNode:
             """Custom-made tree constructor"""
-            stats = root_action_stats(belief, history, info)
+            stats = model.infer_root(belief, history, info)
 
             root = mcts.create_root_node_with_child_for_all_actions(belief, info, stats)
 
@@ -234,7 +284,7 @@ def create_pouct_with_models(
         :param history: ignored
         """
         action, info = planner(belief, history)
-        model_update(belief, history, info)
+        model.update(belief, history, info)
 
         return action, info
 
@@ -271,32 +321,64 @@ def log_episode_to_wandb(episode_info: List[Dict[str, Any]]):
     )
 
 
-def log_predictions_to_wandb(episode_info: List[Dict[str, Any]]):
-    """Logs predictions for flat POMDPs solutions to wandb"""
+def log_statistics_to_wandb(episode_info: List[Dict[str, Any]], model_output=str):
+    """Logs predictions for flat POMDPs solutions to wandb
+
+    :param model_output: in ["value_and_prior", "q_values"]
+    """
+    assert model_output in ["value_and_prior", "q_values"]
+
     episode = episode_info[0]["episode"]
 
+    # general info from ``episode_info``
     intitial_value_prediction = episode_info[0]["root_value_prediction"]
-    value_losses = [info["value_prediction_loss"] for info in episode_info]
-    prior_losses = [info["prior_prediction_loss"] for info in episode_info]
     initial_q_values = {
         a: stats["qval"] for a, stats in episode_info[0]["tree_root_stats"].items()
-    }
-    initial_prior_prediction = {
-        a: stats["prior"] for a, stats in episode_info[0]["tree_root_stats"].items()
     }
     initial_visitations = {
         a: stats["n"] for a, stats in episode_info[0]["tree_root_stats"].items()
     }
 
+    # gather model-output specific statistics from ``episode_info``
+    if model_output == "value_and_prior":
+        model_stats = value_and_prior_model_statistics(episode_info)
+    else:
+        model_stats = q_values_model_statistics(episode_info)
+
+    # log them all (note ** expansion)
     wandb.log(
         {
-            "value_prediction_loss": wandb.Histogram(value_losses),
-            "prior_prediction_loss": wandb.Histogram(prior_losses),
             "initital_value_prediction": intitial_value_prediction,
-            "intitial_prior_prediction": initial_prior_prediction,
-            "episode": episode,
             "initial_q_values": initial_q_values,
             "initial_visitations": initial_visitations,
+            **model_stats,
         },
         step=episode,
     )
+
+
+def value_and_prior_model_statistics(
+    episode_info: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Logs predictions for flat POMDPs solutions to wandb"""
+    value_losses = [info["value_prediction_loss"] for info in episode_info]
+    prior_losses = [info["prior_prediction_loss"] for info in episode_info]
+    initial_prior_prediction = {
+        a: stats["prior"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+
+    return {
+        "value_prediction_loss": wandb.Histogram(value_losses),
+        "prior_prediction_loss": wandb.Histogram(prior_losses),
+        "intitial_prior_prediction": initial_prior_prediction,
+    }
+
+
+def q_values_model_statistics(episode_info: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Logs predictions for flat POMDPs solutions to wandb"""
+    q_losses = [info["q_prediction_loss"] for info in episode_info]
+
+    return {
+        "q_prediction_loss": wandb.Histogram(q_losses),
+        "initial_q_prediction": episode_info[0]["root_q_prediction"],
+    }

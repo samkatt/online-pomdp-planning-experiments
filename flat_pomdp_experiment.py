@@ -1,9 +1,8 @@
 """Entrypoint of experiments on online POMDP planners on flat POMDPs
 
 Functions as a gateway to the different experiments. Accepts a domain file,
-then specifies the type of solution method (in `[po-uct, po-zero-state,
-    po-zero-history]`), followed by solution method specific cofigurations. For
-example, to run MCTS (MDP) online planning::
+then specifies the type of solution method, followed by solution method
+specific cofigurations. For example, to run MCTS (POMDP) online planning::
 
     python flat_pomdp_experiment.py conf/flat_pomdp/tiger.pomdp po-uct conf/solutions/pouct_example.yaml
 
@@ -41,9 +40,7 @@ def main():
     global_parser = argparse.ArgumentParser()
 
     global_parser.add_argument("domain_file")
-    global_parser.add_argument(
-        "solution_method", choices=["po-uct", "po-zero-state", "po-zero-history"]
-    )
+    global_parser.add_argument("solution_method", choices=["po-uct", "po-zero"])
     global_parser.add_argument("conf")
 
     global_parser.add_argument("-v", "--verbose", action="store_true")
@@ -101,21 +98,32 @@ def main():
     if conf["solution_method"] == "po-uct":
         planner = flat_pomdps_interface.create_pouct(flat_pomdp, **conf)
 
-    else:
+    elif conf["solution_method"] == "po-zero":
 
         if conf["wandb"]:
-            metric_loggers.append(flat_pomdps_interface.log_predictions_to_wandb)
+            metric_loggers.append(
+                partial(
+                    flat_pomdps_interface.log_statistics_to_wandb,
+                    model_output=conf["model_output"],
+                )
+            )
 
-        if conf["solution_method"] == "po-zero-state":
-            model_creator = tabular_models.create_state_models
-        elif conf["solution_method"] == "po-zero-history":
-            model_creator = tabular_models.create_history_models
-        else:
-            raise ValueError("Unsupported solution method {'solution_method'}")
+        num_states = flat_pomdp.state_space.n
+        actions = range(flat_pomdp.action_space.n)
 
-        planner = flat_pomdps_interface.create_pouct_with_models(
-            flat_pomdp, model_creator, **conf
+        model = tabular_models.create_value_and_prior_model(
+            conf["model_input"],
+            conf["model_output"],
+            num_states,
+            actions,
+            conf["learning_rate"],
         )
+        planner = flat_pomdps_interface.create_pouct_with_models(
+            flat_pomdp, model, **conf
+        )
+
+    else:
+        raise ValueError(f"Solution method '{conf['solution_method']}' not accepted")
 
     # create single log-metric call
     def log_metrics(info: List[Dict[str, Any]]) -> None:
