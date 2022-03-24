@@ -191,10 +191,13 @@ def create_pouct_with_models(
             o: Optional[planning_types.Observation],
             info: planning_types.Info,
         ) -> Tuple[float, mcts.ActionStats]:
+            assert o is not None and node is not None
 
-            hist = list(history)
-            if node:
-                hist.extend(node.parent.history())
+            hist = (
+                list(history)
+                + node.parent.history()
+                + [planning_types.ActionObservation(node.action, o)]
+            )
 
             return model_inference(tuple(hist), s)
 
