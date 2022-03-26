@@ -42,7 +42,7 @@ class EpisodeResetter(Protocol):
     """The type that resets the planner or belief in between episodes"""
 
     def __call__(self, planner: Planner, belief: belief_types.Belief) -> None:
-        """Resets ``planner`` and/or ``belief"""
+        """Resets ``planner`` and/or ``belief``"""
 
 
 def run_episode(
