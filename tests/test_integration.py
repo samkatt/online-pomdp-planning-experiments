@@ -48,7 +48,7 @@ def test_flat_po_zero():
                     "po-zero",
                     "conf/solutions/po_zero_example.yaml",
                     f"model_input={model_input}",
-                    f"model_output={model_output}"
+                    f"model_output={model_output}",
                 ],
                 stderr=subprocess.PIPE,
             )
