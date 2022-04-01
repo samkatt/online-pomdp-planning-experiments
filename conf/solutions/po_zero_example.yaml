@@ -6,6 +6,7 @@ max_tree_depth: 100 # max depth of tree (positive int)
 discount_factor: 0.99 # discount factor of the discounted return [0,1]
 num_particles: 128 # number of particles to track in belief
 learning_rate: 0.1 # learning rate
+backup_operator: mc  # backup operator used in MCTS: "mc" or "max"
 # For any model: "max_q", "soft_q", "max_visits", "visits_prob,
 # If `model_output` == "value_and_prior": "max_prior" or "prior_prob"
 # If `model_output` == "q_values": "max_q_model" or "soft_q_model"

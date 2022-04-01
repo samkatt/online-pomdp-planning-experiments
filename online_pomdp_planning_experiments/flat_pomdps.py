@@ -151,9 +151,10 @@ def create_pouct_with_models(
     ucb_constant: float,
     max_tree_depth: int,
     discount_factor: float,
-    verbose: bool,
+    backup_operator: str,
     action_selection: str,
     model_output: str,
+    verbose: bool,
     **_,
 ) -> Planner:
     """Creates an observation/belief-based (POMDP) MCTS planner using state-based model
@@ -168,6 +169,7 @@ def create_pouct_with_models(
     models (e.g. state or history based)
 
     :param model: determines the type of models (e.g. tabular vs network, q-model vs value and prior)
+    :param backup_operator: what type of backup ("max" or "mc") to use during MCTS
     :param action_selection: in [
             "max_q", "soft_q", "max_q_model", "soft_q_model",
             "max_visits", or "visits_prob", "max_prior", "prior_prob"
@@ -188,6 +190,7 @@ def create_pouct_with_models(
         "max_q_model",
         "soft_q_model",
     ]
+    assert backup_operator in ["max", "mc"]
     assert model_output in ["value_and_prior", "q_values"]
 
     # stop condition: keep track of `pbar` if `progress_bar` is set
@@ -234,7 +237,7 @@ def create_pouct_with_models(
     backprop = partial(
         mcts.backprop_running_q,
         discount_factor=discount_factor,
-        backup_operator=mcts.mc_backup,
+        backup_operator=mcts.mc_backup if backup_operator == "mc" else mcts.max_backup,
     )
     action_select = create_action_selector(action_selection)
 
