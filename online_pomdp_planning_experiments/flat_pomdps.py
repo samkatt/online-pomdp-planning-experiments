@@ -231,7 +231,11 @@ def create_pouct_with_models(
         mcts.select_leaf_by_max_scores, sim, node_scoring_method, max_tree_depth
     )
 
-    backprop = partial(mcts.backprop_running_q, discount_factor)
+    backprop = partial(
+        mcts.backprop_running_q,
+        discount_factor=discount_factor,
+        backup_operator=mcts.mc_backup,
+    )
     action_select = create_action_selector(action_selection)
 
     def planner(belief: planning_types.Belief, history: HashableHistory):
