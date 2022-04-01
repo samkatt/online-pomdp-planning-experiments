@@ -284,7 +284,7 @@ def create_history_value_and_prior_model(actions, learning_rate: float) -> Model
         prior = model.prior.infer(history)
 
         stats = {
-            a: {"prior": prior[i], "n": 1, "qval": 0.0}
+            a: {"prior": prior[i], "n": 0, "qval": 0.0}
             for i, a in enumerate(action_list)
         }
 
