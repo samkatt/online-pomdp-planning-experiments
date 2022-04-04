@@ -5,8 +5,8 @@ from typing import Generic, Iterable, MutableMapping, NamedTuple, TypeVar
 
 import numpy as np
 import online_pomdp_planning.types as planning_types
-from scipy.special import softmax
 
+from online_pomdp_planning_experiments import mcts_extensions, utils
 from online_pomdp_planning_experiments.models.abstract import Model
 
 K = TypeVar("K")
@@ -57,8 +57,7 @@ class QModel(Generic[K]):
         :param target: q-values target
         :param alpha: the learning rate/update step
         """
-        # this is a hack: API of numpy simply mirrors that of regular data points in python
-        self._values[x] = minimize_squared_error(target, self._values[x], alpha)
+        self._values[x] = utils.minimize_squared_error(target, self._values[x], alpha)
 
 
 class ValueModel(Generic[K]):
@@ -93,7 +92,7 @@ class ValueModel(Generic[K]):
         :param target: value should move towards this
         :param learning_rate: the step size [0,1]
         """
-        self._values[x] = minimize_squared_error(
+        self._values[x] = utils.minimize_squared_error(
             target, self._values[x], alpha=learning_rate
         )
 
@@ -108,7 +107,7 @@ class ValueModel(Generic[K]):
         :param target: target value that should be compared to
         :return: (target - estimate)^2
         """
-        return square_error(target, self.infer(x))
+        return utils.square_error(target, self.infer(x))
 
 
 class PolicyModel(Generic[K]):
@@ -142,7 +141,7 @@ class PolicyModel(Generic[K]):
         :param target: policy should move towards this
         :param learning_rate: the step size [0,1]
         """
-        self._policy[x] = minimize_kl(target, self._policy[x], learning_rate)
+        self._policy[x] = utils.minimize_kl(target, self._policy[x], learning_rate)
 
     def loss(self, x: K, target: np.ndarray) -> float:
         """Computes loss of model for ``x`` given ``target`` policy
@@ -155,7 +154,7 @@ class PolicyModel(Generic[K]):
         :param target: target value that should be compared to
         :return: `KL_div(target, x)`
         """
-        return kl_divergence(target, self.infer(x))
+        return utils.kl_divergence(target, self.infer(x))
 
 
 class ValuePriorModel(NamedTuple):
@@ -168,9 +167,10 @@ class ValuePriorModel(NamedTuple):
 def create_state_value_and_prior_model(
     num_states: int,
     actions: Iterable[planning_types.Action],
+    policy_target: str,
     learning_rate: float,
-    batch_size: int = 100,
-    num_samples: int = 100,
+    batch_size: int,
+    num_samples: int,
 ):
     """Creates the 'inference' and 'update' for state models
 
@@ -180,8 +180,13 @@ def create_state_value_and_prior_model(
 
     Assumes states are integers!
 
+    The ``policy_target`` is which policy to learn from. "soft_q" will
+    minimize the (KL) difference between the softmax q values, whereas "visits"
+    will minimize with the (root) visitations.
+
     :param num_states: the number of states
     :param actions: generator that spits out all actions in the environment
+    :param policy_target: in ["soft_q", "visits"]
     :param learning_rate: (alpha) learning step size during model updates
     :param batch_size: number of 'state' updates to do from 'belief'
     :param num_samples: number of samples used to estimate loss
@@ -189,6 +194,7 @@ def create_state_value_and_prior_model(
     assert (
         num_states > 0 and 0 < learning_rate <= 1 and batch_size > 0 and num_samples > 0
     )
+    assert policy_target in ["soft_q", "visits"]
 
     # action `i` <==> `action_list[i]`
     action_list = list(actions)
@@ -199,6 +205,10 @@ def create_state_value_and_prior_model(
     init_policy = np.ones((num_states, num_actions)) / num_actions
 
     model = ValuePriorModel(ValueModel(init_vals), PolicyModel(init_policy))
+
+    target_policy_f = mcts_extensions.create_prior_target_policy(
+        policy_target, action_list
+    )
 
     def model_inference(history, state):
         """Implements :class:`ModelInference`"""
@@ -217,7 +227,7 @@ def create_state_value_and_prior_model(
         # compute targets
         q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
         target_value = max(q_vals)
-        target_policy = softmax(q_vals)
+        target_policy = target_policy_f(info)
 
         info["value_prediction_loss"] = np.mean(
             [model.value_model.loss(belief(), target_value) for _ in range(num_samples)]
@@ -254,7 +264,9 @@ def create_state_value_and_prior_model(
     return Model(model_update, model_inference, root_action_stats)
 
 
-def create_history_value_and_prior_model(actions, learning_rate: float) -> Model:
+def create_history_value_and_prior_model(
+    actions, policy_target: str, learning_rate: float
+) -> Model:
     """Creates the 'inference' and 'update' for history models
 
     The biggest 'challenge' here is trying to map between indices and
@@ -266,9 +278,17 @@ def create_history_value_and_prior_model(actions, learning_rate: float) -> Model
 
     Supposed to be used as :func:`ModelCreator` given all input
 
+    The ``policy_target`` is which policy to learn from. "soft_q" will
+    minimize the (KL) difference between the softmax q values, whereas "visits"
+    will minimize with the (root) visitations.
+
     :param actions: generator that spits out all actions in the environment
+    :param policy_target: in ["soft_q", "visits"]
     :param learning_rate: (alpha) learning step size during model updates
     """
+    assert 0.0 < learning_rate < 1.0
+    assert policy_target in ["soft_q", "visits"]
+
     # action `i` <==> `action_list[i]`
     action_list = sorted(list(actions))
     num_a = len(action_list)
@@ -277,6 +297,10 @@ def create_history_value_and_prior_model(actions, learning_rate: float) -> Model
     init_policy = defaultdict(lambda: np.ones(num_a) / num_a)
 
     model = ValuePriorModel(ValueModel(init_vals), PolicyModel(init_policy))
+
+    target_policy_f = mcts_extensions.create_prior_target_policy(
+        policy_target, action_list
+    )
 
     def model_inference(history, state):
         """Implements :class:`ModelInference`"""
@@ -295,7 +319,7 @@ def create_history_value_and_prior_model(actions, learning_rate: float) -> Model
         # compute targets
         q_vals = [info["tree_root_stats"][a]["qval"] for a in action_list]
         target_value = max(q_vals)
-        target_policy = softmax(q_vals)
+        target_policy = target_policy_f(info)
 
         # store model info
         info["value_prediction_loss"] = model.value_model.loss(history, target_value)
@@ -323,6 +347,7 @@ def create_value_and_prior_model(
     model_output: str,
     num_states: int,
     actions: Iterable[planning_types.Action],
+    policy_target: str,
     learning_rate: float,
     batch_size: int = 100,
     num_samples: int = 100,
@@ -336,6 +361,7 @@ def create_value_and_prior_model(
     :param model_output: in ["value_and_prior", "q_values"]
     :param num_states: ignored when ``model_input`` is "history"
     :param actions: basically a replacement for action space
+    :param policy_target: in ["soft_q", "visits"]
     :param learning_rate: (alpha) learning step size during model updates
     :param batch_size: number of updates to do from 'belief' when ``model_input`` is "state"
     :param num_samples: number of samples used to estimate loss when ``model_input`` is "state"
@@ -347,15 +373,27 @@ def create_value_and_prior_model(
     assert num_states > 0 and batch_size > 0 and num_samples > 0
 
     if model_output == "value_and_prior":
+        assert policy_target in ["soft_q", "visits"]
+
+    if model_output == "value_and_prior":
         if model_input == "state":
             return create_state_value_and_prior_model(
-                num_states, actions, learning_rate, batch_size
+                num_states,
+                actions,
+                policy_target,
+                learning_rate,
+                batch_size,
+                num_samples,
             )
 
         if model_input == "history":
-            return create_history_value_and_prior_model(actions, learning_rate)
+            return create_history_value_and_prior_model(
+                actions, policy_target, learning_rate
+            )
 
     if model_output == "q_values":
+
+        assert policy_target == "soft_q"
 
         if model_input == "state":
             return create_state_q_model(
@@ -482,63 +520,3 @@ def create_history_q_model(
         m.update(history, target_q, alpha=learning_rate)
 
     return Model(update, infer_leaf, infer_root)
-
-
-def kl_divergence(p: np.ndarray, q: np.ndarray, epsilon=0.00001) -> float:
-    """utility function to compute KL divergence
-
-    Asserts ``p`` and ``q`` sum to 1
-
-    Due to instability when either p or q contain zeros,
-
-    :param epsilon: stability factor [0,1]
-    :return: float (KL(p || q))
-    """
-    assert -epsilon < np.sum(p) - 1 < epsilon
-    assert -epsilon < np.sum(q) - 1 < epsilon
-
-    p_eps = p + epsilon
-    q_eps = q + epsilon
-
-    return np.sum(p_eps * np.log(p_eps / q_eps))
-
-
-def square_error(target: float, y: float) -> float:
-    """Computes the squared error ``(target - y)^2`` between target and y"""
-    return pow(target - y, 2)
-
-
-def minimize_kl(p: np.ndarray, q: np.ndarray, alpha: float = 0.1) -> np.ndarray:
-    """Updates `q` to be closer to `p` through KL divergence
-
-    KL(p || q) = sum_i p_i log(p_i / q_i).
-
-    :param alpha: learning rate (step)
-    :return: next ``q``, updated with learning step ``alpha`` to be closer to ``p``
-    """
-    # So apparently this optimization is a little tricky.
-    # What we do is Assume that ``q`` is actually determined by a softmax on
-    # some parameters ``z``: q = exp(z) / sum(exp(z))
-    # We first 'get' those back:
-    z = np.log(q)
-
-    # We actually know how to take the derivative of the KL wrt these ``z``
-    # Turns out this is relatively easy, the derivative is ``p - q``
-    z += alpha * (p - q)
-
-    # Now we could actually maintain the ``z`` and
-    # softmax whenever we need to actually sample,
-    # But I decided for now to return the new ``q`` values
-
-    # q = exp(z) / sum(exp(z))
-    z_exp = np.exp(z)
-    return z_exp / np.sum(z_exp)
-
-
-def minimize_squared_error(target: float, pred: float, alpha: float = 0.1) -> float:
-    """Returns updated ``value`` to be closer to be a step ``alpha`` closer to ``pred``
-
-    :param alpha: learning rate
-    :return: next prediction updated with learning step ``alpha``
-    """
-    return pred + alpha * (target - pred)

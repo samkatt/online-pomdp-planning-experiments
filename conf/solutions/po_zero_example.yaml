@@ -13,3 +13,4 @@ backup_operator: mc  # backup operator used in MCTS: "mc" or "max"
 action_selection: max_q
 model_input: history # "state" or "history"
 model_output: value_and_prior # "value_and_prior" or "q_values"
+policy_target: soft_q # "soft_q" or "visits"

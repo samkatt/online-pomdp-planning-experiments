@@ -116,6 +116,7 @@ def main():
             conf["model_output"],
             num_states,
             actions,
+            conf["policy_target"],
             conf["learning_rate"],
         )
         planner = flat_pomdps_interface.create_pouct_with_models(

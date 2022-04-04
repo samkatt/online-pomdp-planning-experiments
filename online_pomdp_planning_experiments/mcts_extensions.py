@@ -9,15 +9,58 @@ the prior (max, and sample)
 """
 
 import random
+from typing import Callable, List
 
+import numpy as np
 import online_pomdp_planning.mcts as mcts_lib
-import online_pomdp_planning.types as mcts_types
+import online_pomdp_planning.types as planning_types
 from scipy.special import softmax
 
 
+def visits_to_policy(visits: List[int]) -> np.ndarray:
+    """Converts a list of counts to a policy
+
+    Basically just returns the list divided by its sum:
+
+        return `visits / sum(visits)`
+
+    :param visits: positive counts
+    """
+    return np.array(visits) / sum(visits)
+
+
+def create_prior_target_policy(
+    policy_target: str, action_list: List[planning_types.Action]
+) -> Callable[[planning_types.Info], np.ndarray]:
+    """Factory for creating target policies for the prior
+
+    Creates the function that should, given a :data:`planning_types.Info`
+    return the target policy. The target policy is an array of probabilities.
+
+    `policy_target` determines the type of policy computation. Currently it
+    allows for "soft_q", which would return a :func:`softmax` of the Q-values
+    in the root of the tree. The other option is "visits", which computes a
+    distribution according to the visits of the actions in the root.
+
+    :param policy_target: "soft_q" or "visits"
+    :param action_list: simply all actions in domain
+    """
+    assert policy_target in ["soft_q", "visits"]
+    if policy_target == "soft_q":
+        return lambda info: softmax(
+            [info["tree_root_stats"][a]["qval"] for a in action_list]
+        )
+    if policy_target == "visits":
+        return lambda info: visits_to_policy(
+            [info["tree_root_stats"][a]["n"] for a in action_list]
+        )
+
+    raise ValueError(f"'policy_target' {policy_target} not supported")
+
+
 def max_prior_action_selector(
-    stats: mcts_lib.ActionStats, info: mcts_types.Info
-) -> mcts_types.Action:
+    stats: mcts_lib.ActionStats, info: planning_types.Info
+) -> planning_types.Action:
     """Samples action with highest prior probability
 
     Implements :class:`mcts_lib.ActionSelection`.
@@ -36,8 +79,8 @@ def max_prior_action_selector(
 
 
 def prior_prob_action_selector(
-    stats: mcts_lib.ActionStats, info: mcts_types.Info
-) -> mcts_types.Action:
+    stats: mcts_lib.ActionStats, info: planning_types.Info
+) -> planning_types.Action:
     """Samples action according to prior distribution
 
     Implements :class:`mcts_lib.ActionSelection`.
@@ -64,8 +107,8 @@ def prior_prob_action_selector(
 
 
 def soft_q_model_action_selector(
-    stats: mcts_lib.ActionStats, info: mcts_types.Info
-) -> mcts_types.Action:
+    stats: mcts_lib.ActionStats, info: planning_types.Info
+) -> planning_types.Action:
     """Samples action through softmax on their predicted q-values
 
     Assumes ``info`` has a "root_q_prediction" {action => float} dictionary

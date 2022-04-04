@@ -54,6 +54,19 @@ def test_flat_po_zero():
             )
             assert_proc_ended_okay(proc)
 
+    proc = subprocess.Popen(
+        [
+            "python",
+            "flat_pomdp_experiment.py",
+            "conf/flat_pomdp/tiger.pomdp",
+            "po-zero",
+            "conf/solutions/po_zero_example.yaml",
+            "policy_target=visits",
+        ],
+        stderr=subprocess.PIPE,
+    )
+    assert_proc_ended_okay(proc)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
