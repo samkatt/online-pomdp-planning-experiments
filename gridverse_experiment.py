@@ -74,8 +74,8 @@ def main():
     if conf["wandb"]:
         with open(conf["wandb"]) as f:
             wandb_conf = yaml.load(f, Loader=SafeLoader)
+            conf.update(wandb_conf)
             wandb.init(config=conf, **wandb_conf)
-        conf.update(wandb_conf)
 
     # load domain
     gym_gridverse_inner_env = factory_env_from_yaml(args.domain_yaml)

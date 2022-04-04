@@ -71,6 +71,7 @@ def main():
 
         with open(args.wandb) as f:
             wandb_conf = yaml.load(f, Loader=SafeLoader)
+            conf.update(wandb_conf)
             wandb.init(config=conf, **wandb_conf)
 
         report_to_wandb(aggregated_data, DATA_SUMMARY_CONFIG)

@@ -76,8 +76,8 @@ def main():
     if conf["wandb"]:
         with open(conf["wandb"]) as f:
             wandb_conf = yaml.load(f, Loader=SafeLoader)
+            conf.update(wandb_conf)
             wandb.init(config=conf, **wandb_conf)
-        conf.update(wandb_conf)
 
     # load domain
     with open(conf["domain_file"], "r") as f:
