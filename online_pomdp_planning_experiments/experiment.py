@@ -8,12 +8,8 @@ import numpy as np
 import online_pomdp_planning.types as planning_types
 import pomdp_belief_tracking.types as belief_types
 
-HashableHistory = Tuple[planning_types.ActionObservation, ...]
-"""The action-observation history as a tuple"""
-
-
 Planner = Callable[
-    [planning_types.Belief, HashableHistory],
+    [planning_types.Belief, planning_types.History],
     Tuple[planning_types.Action, planning_types.Info],
 ]
 """A planner in these experiments maps a belief and/or history to action and info"""
@@ -24,6 +20,7 @@ class Environment(Protocol):
 
     def reset(self) -> None:
         """An environment needs to be able to reset"""
+        raise NotImplementedError()
 
     def step(self, action: Any) -> Tuple[Any, float, bool]:
         """The step signature
@@ -36,6 +33,7 @@ class Environment(Protocol):
     @property
     def state(self) -> Any:
         """I want to be able to get the state for logging purposes really"""
+        raise NotImplementedError()
 
 
 class EpisodeResetter(Protocol):
@@ -64,7 +62,7 @@ def run_episode(
 
     for t in range(horizon):
 
-        action, planning_info = planner(belief.sample, tuple(history))
+        action, planning_info = planner(belief.sample, history)
         obs, reward, terminal = env.step(action)
         belief_info = belief.update(action, obs)
 

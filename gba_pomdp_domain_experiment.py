@@ -1,38 +1,37 @@
-"""Entrypoint of experiments on online POMDP planners on flat POMDPs
+"""Entrypoint of experiments of online POMDP planners on domains defined in GBA-POMDP
 
-Functions as a gateway to the different experiments. Accepts a domain file,
+Functions as a gateway to the different experiments. Accepts a domain name,
 then specifies the type of solution method, followed by solution method
-specific cofigurations. For example, to run MCTS (POMDP) online planning::
+specific configurations. For example, to run MCTS (POMDP) online planning::
 
-    python flat_pomdp_experiment.py conf/flat_pomdp/tiger.pomdp po-uct conf/solutions/pouct_example.yaml
+    python gba_pomdp_domain_experiment.py tiger po-uct conf/solutions/pouct_example.yaml
 
 Note that most solution methods assume configurations are at some point passed
 through a yaml file. For convenience we allow *overwriting* values in these
 config files by appending any call with overwriting values, for example::
 
-    python flat_pomdp_experiment.py conf/flat_pomdp/1d.pomdp po-uct conf/solutions/pouct_example.yaml num_sims=128
+    python gba_pomdp_domain_experiment.py gridworld --size 3 po-uct conf/solutions/pouct_example.yaml  num_sims=128
 
 Also accepts optional keyword '-v' (`--verbose`), `-n` (`--num_runs`), `-o`
 (`--out_file`), `--seed`, and `-w` (`--wandb`). Where `--wandb` refers to a
 file such as in `conf/wandb_conf.yaml`
 """
-
 import argparse
 import logging
 import pickle
 from functools import partial
-from operator import eq
 from typing import Any, Dict, List
 
+import numpy as np
 import pandas as pd
+import torch
 import yaml
-from gym_pomdps.envs.pomdp import POMDP
 from yaml.loader import SafeLoader
 
-import online_pomdp_planning_experiments.flat_pomdps as flat_pomdps_interface
+import online_pomdp_planning_experiments.models.nn as nn_models
 import online_pomdp_planning_experiments.models.tabular as tabular_models
 import wandb
-from online_pomdp_planning_experiments import core, utils
+from online_pomdp_planning_experiments import core, gba_pomdp_interface, utils
 from online_pomdp_planning_experiments.experiment import run_experiment, set_random_seed
 
 
@@ -41,7 +40,14 @@ def main():
 
     global_parser = argparse.ArgumentParser()
 
-    global_parser.add_argument("domain_file")
+    global_parser.add_argument(
+        "domain",
+        choices=[
+            "tiger",
+            "gridworld",
+        ],
+    )
+    global_parser.add_argument("--size", type=int, default=0)
     global_parser.add_argument("solution_method", choices=["po-uct", "po-zero"])
     global_parser.add_argument("conf")
 
@@ -89,19 +95,18 @@ def main():
             conf.update(wandb_conf)
             wandb.init(config=conf, **wandb_conf)
 
-    # load domain
-    with open(conf["domain_file"], "r") as f:
-        flat_pomdp = POMDP(f.read(), episodic=True)
+    tabular = "model_type" not in conf or conf["model_type"] == "tabular"
+    env = gba_pomdp_interface.create_domain(conf["domain"], conf["size"], not tabular)
 
     # create belief (common to all solution methods so far)
     belief = core.create_rejection_sampling(
-        flat_pomdp.reset_functional,
-        flat_pomdps_interface.BeliefSimulator(flat_pomdp),
-        eq,
+        env.sample_start_state,
+        gba_pomdp_interface.BeliefSimulator(env),
+        np.array_equal,
         conf["num_particles"],
         conf["verbose"],
     )
-    episode_reset = [partial(flat_pomdps_interface.reset_belief, env=flat_pomdp)]
+    episode_reset = [partial(gba_pomdp_interface.reset_belief, env=env)]
     metric_loggers = []
 
     if conf["wandb"]:
@@ -110,15 +115,12 @@ def main():
     # create solution method
     if conf["solution_method"] == "po-uct":
         planner = core.create_pouct(
-            range(flat_pomdp.action_space.n),
-            flat_pomdps_interface.PlanningSimulator(flat_pomdp),
+            range(env.action_space.n),
+            gba_pomdp_interface.PlanningSimulator(env),
             **conf,
         )
 
     elif conf["solution_method"] == "po-zero":
-
-        if conf["model_type"] != "tabular":
-            raise ValueError("Any `model_type` other than 'tabular' is not allowed")
 
         if conf["wandb"]:
             metric_loggers.append(
@@ -128,21 +130,41 @@ def main():
                 )
             )
 
-        num_states = flat_pomdp.state_space.n
-        actions = range(flat_pomdp.action_space.n)
+        actions = range(env.action_space.n)
 
-        model = tabular_models.create_tabular_model(
-            conf["model_input"],
-            conf["model_output"],
-            num_states,
-            actions,
-            lambda s: s,
-            tuple,
-            conf["policy_target"],
-            conf["learning_rate"],
-        )
+        if conf["model_type"] == "tabular":
+            num_states = env.state_space.n
+
+            model = tabular_models.create_tabular_model(
+                conf["model_input"],
+                conf["model_output"],
+                num_states,
+                actions,
+                env.state_space.index_of,
+                gba_pomdp_interface.hashable_history,
+                conf["policy_target"],
+                conf["learning_rate"],
+            )
+
+        elif conf["model_type"] == "nn":
+
+            model = nn_models.create_nn_model(
+                conf["model_input"],
+                conf["model_output"],
+                env.state_space.ndim,
+                env.action_space.n + env.observation_space.ndim,
+                actions,
+                torch.Tensor,
+                partial(gba_pomdp_interface.history_to_tensor, env=env),
+                conf["policy_target"],
+                conf["learning_rate"],
+            )
+
+        else:
+            raise ValueError(f"`model_type` {conf['model_type']} not accepted")
+
         planner = core.create_pouct_with_models(
-            flat_pomdps_interface.PlanningSimulator(flat_pomdp), model, **conf
+            gba_pomdp_interface.PlanningSimulator(env), model, **conf
         )
 
     else:
@@ -154,7 +176,7 @@ def main():
             f(info)
 
     runtime_info = run_experiment(
-        flat_pomdps_interface.FlatPOMDPEnvironment(flat_pomdp),
+        gba_pomdp_interface.GBAPOMDPEnvironment(env),
         planner,
         belief,
         episode_reset,

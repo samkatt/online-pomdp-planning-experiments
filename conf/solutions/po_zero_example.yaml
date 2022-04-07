@@ -11,6 +11,7 @@ backup_operator: mc  # backup operator used in MCTS: "mc" or "max"
 # If `model_output` == "value_and_prior": "max_prior" or "prior_prob"
 # If `model_output` == "q_values": "max_q_model" or "soft_q_model"
 action_selection: max_q
+model_type: tabular # "tabular" or "nn"
 model_input: history # "state" or "history"
 model_output: value_and_prior # "value_and_prior" or "q_values"
 policy_target: soft_q # "soft_q" or "visits"

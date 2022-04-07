@@ -15,8 +15,6 @@ from typing import Any, NamedTuple, Protocol, Tuple
 import online_pomdp_planning.mcts as mcts_lib
 import online_pomdp_planning.types as planning_types
 
-from online_pomdp_planning_experiments.experiment import HashableHistory
-
 
 class ModelUpdate(Protocol):
     """Interface for model updates"""
@@ -24,7 +22,7 @@ class ModelUpdate(Protocol):
     def __call__(
         self,
         belief: planning_types.Belief,
-        history: HashableHistory,
+        history: planning_types.History,
         info: planning_types.Info,
     ):
         """Updates a model given a belief ``belief`` and or ``history``
@@ -38,22 +36,28 @@ class ModelUpdate(Protocol):
         :param history: the current history
         :return: none
         """
+        raise NotImplementedError("Should be implemented by derived class")
 
 
 class ModelInference(Protocol):
     """Interface for model inference"""
 
     def __call__(
-        self, history: HashableHistory, state: Any
+        self,
+        history: planning_types.History,
+        simulated_history: planning_types.History,
+        state: Any,
     ) -> Tuple[float, mcts_lib.ActionStats]:
         """Infers values or other statistics given ``history`` and/or ``state``
 
         Used to evaluate leafs, the idea being that it'll return
 
-        :param history: real_history + tree_path
+        :param history: real_history up to current timestep
+        :param simulated_history: tree path / simulated history
         :param state: state that the simulation ended in (at ``history``)
         :return: value of leaf and action stats
         """
+        raise NotImplementedError("Should be implemented by derived class")
 
 
 class ModelRootInference(Protocol):
@@ -62,7 +66,7 @@ class ModelRootInference(Protocol):
     def __call__(
         self,
         belief: planning_types.Belief,
-        history: HashableHistory,
+        history: planning_types.History,
         info: planning_types.Info,
     ) -> mcts_lib.ActionStats:
         """Infer root action statistics given a ``belief`` and ``history``
@@ -73,6 +77,7 @@ class ModelRootInference(Protocol):
         :param history: the current history
         :return: none
         """
+        raise NotImplementedError("Should be implemented by derived class")
 
 
 class Model(NamedTuple):

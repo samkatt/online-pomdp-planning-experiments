@@ -18,5 +18,8 @@ disable = [
     "W1514",  # allow 'unspecified encoding'
 ]
 max-line-length = 120
+generated-members = [
+    "torch.*"
+]
 
 [tool.pyright]

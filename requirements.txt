@@ -7,3 +7,5 @@ pandas
 scipy
 wandb
 matplotlib
+torch
+general_bayes_adaptive_pomdps @ git+ssh://git@github.com/samkatt/private-gbapomdp.git@aee4248973011f45cc130c354f4d7eb4fae10283

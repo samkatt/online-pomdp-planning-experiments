@@ -1,13 +1,10 @@
 """Functionality to interface with [gym-gridverse](git@github.com/abaisero/gym-gridverse.git)"""
 
-from operator import eq
 from typing import Any, Tuple
 
 import online_pomdp_planning.types as planning_types
-import pomdp_belief_tracking.pf.rejection_sampling as RS
 import pomdp_belief_tracking.types as belief_types
 from gym_gridverse.envs.inner_env import InnerEnv
-from online_pomdp_planning.mcts import create_POUCT
 
 from online_pomdp_planning_experiments.experiment import Environment
 
@@ -37,67 +34,38 @@ class GymGridverseEnvironment(Environment):
         return self._env.state.agent
 
 
-def create_rejection_sampling(
-    env: InnerEnv, n: int, show_progress_bar: bool
-) -> belief_types.Belief:
-    """Creates rejection sampling update
+class PlanningSimulator(planning_types.Simulator):
+    """Converts the :class:`InnerEnv` into a simulator for planning"""
 
-    :param n: number of samples to track
-    :param show_progress_bar: ensures a progress bar is printed if ``True``
-    """
+    def __init__(self, env: InnerEnv):
+        """Initiates the simulator"""
+        self._env = env
 
-    def sim(s, a):
-        next_state, _, _ = env.functional_step(s, a)
-        obs = env.functional_observation(next_state)
-
-        return next_state, obs
-
-    accept_func: RS.ProcessAccepted = (
-        RS.AcceptionProgressBar(n) if show_progress_bar else RS.accept_noop
-    )
-
-    return belief_types.Belief(
-        env.functional_reset,
-        RS.create_rejection_sampling(sim, n, eq, process_acpt=accept_func),
-    )
-
-
-def create_pouct(
-    env: InnerEnv,
-    num_sims: int,
-    ucb_constant: float,
-    horizon: int,
-    rollout_depth: int,
-    max_tree_depth: int,
-    discount_factor: float,
-    verbose: bool,
-    **_,
-) -> planning_types.Planner:
-    """Creates an observation/belief-based (POMDP) MCTS planner
-
-    Uses ``env`` as simulator for its planning, the other input are parameters
-    to the planner.
-
-    :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
-    """
-
-    def sim(s, a):
-        next_state, reward, terminal = env.functional_step(s, a)
-        obs = env.functional_observation(next_state)
+    def __call__(
+        self, s: planning_types.State, a: planning_types.Action
+    ) -> Tuple[planning_types.State, planning_types.Observation, float, bool]:
+        """Interface required by :class:`planning_types.Simulator`"""
+        next_state, reward, terminal = self._env.functional_step(s, a)
+        obs = self._env.functional_observation(next_state)
 
         return next_state, obs, reward, terminal
 
-    return create_POUCT(
-        env.action_space.actions,
-        sim,
-        num_sims,
-        ucb_constant=ucb_constant,
-        horizon=horizon,
-        rollout_depth=rollout_depth,
-        max_tree_depth=max_tree_depth,
-        discount_factor=discount_factor,
-        progress_bar=verbose,
-    )
+
+class BeliefSimulator(belief_types.Simulator):
+    """Converts the :class:`InnerEnv` into a simulator for belief tracking"""
+
+    def __init__(self, env: InnerEnv):
+        """Initiates the simulator"""
+        self._env = env
+
+    def __call__(
+        self, s: belief_types.State, a: belief_types.Action
+    ) -> Tuple[belief_types.State, belief_types.Observation]:
+        """Interface required by :class:`belief_types.Simulator`"""
+        next_state, _, _ = self._env.functional_step(s, a)
+        obs = self._env.functional_observation(next_state)
+
+        return next_state, obs
 
 
 def reset_belief(

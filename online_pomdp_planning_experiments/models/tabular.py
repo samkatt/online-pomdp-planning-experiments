@@ -1,7 +1,25 @@
-"""Basic definitions for tabular/dictionary models"""
+"""Basic definitions for tabular/dictionary models
+
+This module creates tabular models such as (q-)value or policy models for use
+in po-zero. In particular we define:
+
+    - Template type :class:`K` that represents any hashable 'input' type
+    - :class:`QModel`, :class:`ValueModel`, and :class:`PolicyModel`, based
+      on this generic type
+    - Constructor :func:`create_tabular_model` to create the appropriate models
+"""
 
 from collections import Counter, defaultdict
-from typing import Generic, Iterable, MutableMapping, NamedTuple, TypeVar
+from typing import (
+    Callable,
+    Dict,
+    Generic,
+    Hashable,
+    Iterable,
+    MutableMapping,
+    NamedTuple,
+    TypeVar,
+)
 
 import numpy as np
 import online_pomdp_planning.types as planning_types
@@ -10,6 +28,12 @@ from online_pomdp_planning_experiments import mcts_extensions, utils
 from online_pomdp_planning_experiments.models.abstract import Model
 
 K = TypeVar("K")
+
+StateRepresentation = Callable[[planning_types.State], int]
+"""This maps between planner states and input of our models"""
+
+HistoryRepresentation = Callable[[planning_types.History], Hashable]
+"""This maps between planner histories and input of our models"""
 
 
 class QModel(Generic[K]):
@@ -167,6 +191,7 @@ class ValuePriorModel(NamedTuple):
 def create_state_value_and_prior_model(
     num_states: int,
     actions: Iterable[planning_types.Action],
+    state_repr: StateRepresentation,
     policy_target: str,
     learning_rate: float,
     batch_size: int,
@@ -187,6 +212,7 @@ def create_state_value_and_prior_model(
     :param num_states: the number of states
     :param actions: generator that spits out all actions in the environment
     :param policy_target: in ["soft_q", "visits"]
+    :param state_repr: maps from planner state type to our model input type (int)
     :param learning_rate: (alpha) learning step size during model updates
     :param batch_size: number of 'state' updates to do from 'belief'
     :param num_samples: number of samples used to estimate loss
@@ -204,16 +230,16 @@ def create_state_value_and_prior_model(
     init_vals = np.zeros(num_states)
     init_policy = np.ones((num_states, num_actions)) / num_actions
 
-    model = ValuePriorModel(ValueModel(init_vals), PolicyModel(init_policy))
+    model = ValuePriorModel(ValueModel(init_vals), PolicyModel(init_policy))  # type: ignore
 
     target_policy_f = mcts_extensions.create_prior_target_policy(
         policy_target, action_list
     )
 
-    def model_inference(history, state):
+    def model_inference(history, simulated_history, state):
         """Implements :class:`ModelInference`"""
-        v = model.value_model.infer(state)
-        prior = model.prior.infer(state)
+        v = model.value_model.infer(state_repr(state))
+        prior = model.prior.infer(state_repr(state))
 
         stats = {
             a: {"prior": prior[i], "n": 0, "qval": 0.0}
@@ -230,15 +256,21 @@ def create_state_value_and_prior_model(
         target_policy = target_policy_f(info)
 
         info["value_prediction_loss"] = np.mean(
-            [model.value_model.loss(belief(), target_value) for _ in range(num_samples)]
+            [
+                model.value_model.loss(state_repr(belief()), target_value)
+                for _ in range(num_samples)
+            ]
         )
 
         info["prior_prediction_loss"] = np.mean(
-            [model.prior.loss(belief(), target_policy) for _ in range(num_samples)]
+            [
+                model.prior.loss(state_repr(belief()), target_policy)
+                for _ in range(num_samples)
+            ]
         )
 
         # update models
-        for s, p in Counter(belief() for _ in range(batch_size)).items():
+        for s, p in Counter(state_repr(belief()) for _ in range(batch_size)).items():
             model.value_model.update(
                 s, target_value, learning_rate=learning_rate * (p / batch_size)
             )
@@ -250,10 +282,11 @@ def create_state_value_and_prior_model(
         """Implements :class:`ModelRootInterface`"""
         # record info
         info["root_value_prediction"] = np.mean(
-            [model.value_model.infer(belief()) for _ in range(num_samples)]
+            [model.value_model.infer(state_repr(belief())) for _ in range(num_samples)]
         )
         prior = np.mean(
-            [model.prior.infer(belief()) for _ in range(num_samples)], axis=0
+            [model.prior.infer(state_repr(belief())) for _ in range(num_samples)],
+            axis=0,
         )
 
         return {
@@ -265,7 +298,7 @@ def create_state_value_and_prior_model(
 
 
 def create_history_value_and_prior_model(
-    actions, policy_target: str, learning_rate: float
+    actions, hist_repr: HistoryRepresentation, policy_target: str, learning_rate: float
 ) -> Model:
     """Creates the 'inference' and 'update' for history models
 
@@ -283,6 +316,7 @@ def create_history_value_and_prior_model(
     will minimize with the (root) visitations.
 
     :param actions: generator that spits out all actions in the environment
+    :param hist_repr: maps from planner history type to our type (hashable)
     :param policy_target: in ["soft_q", "visits"]
     :param learning_rate: (alpha) learning step size during model updates
     """
@@ -293,8 +327,10 @@ def create_history_value_and_prior_model(
     action_list = sorted(list(actions))
     num_a = len(action_list)
 
-    init_vals = defaultdict(lambda: 0)
-    init_policy = defaultdict(lambda: np.ones(num_a) / num_a)
+    init_vals: Dict[Hashable, float] = defaultdict(lambda: 0)
+    init_policy: Dict[Hashable, np.ndarray] = defaultdict(
+        lambda: np.ones(num_a) / num_a
+    )
 
     model = ValuePriorModel(ValueModel(init_vals), PolicyModel(init_policy))
 
@@ -302,8 +338,10 @@ def create_history_value_and_prior_model(
         policy_target, action_list
     )
 
-    def model_inference(history, state):
+    def model_inference(history, simulated_history, state):
         """Implements :class:`ModelInference`"""
+        history = hist_repr(history + simulated_history)
+
         v = model.value_model.infer(history)
         prior = model.prior.infer(history)
 
@@ -321,6 +359,8 @@ def create_history_value_and_prior_model(
         target_value = max(q_vals)
         target_policy = target_policy_f(info)
 
+        history = hist_repr(history)
+
         # store model info
         info["value_prediction_loss"] = model.value_model.loss(history, target_value)
         info["prior_prediction_loss"] = model.prior.loss(history, target_policy)
@@ -331,22 +371,150 @@ def create_history_value_and_prior_model(
 
     def root_action_stats(belief, history, info):
         """Implements :class:`ModelRootInterface`"""
+        history = hist_repr(history)
         info["root_value_prediction"] = model.value_model.infer(history)
         prior = model.prior.infer(history)
 
         return {
-            a: {"qval": 0.0, "prior": prior[info], "n": 0}
-            for info, a in enumerate(action_list)
+            a: {"qval": 0.0, "prior": prior[i], "n": 0}
+            for i, a in enumerate(action_list)
         }
 
     return Model(model_update, model_inference, root_action_stats)
 
 
-def create_value_and_prior_model(
+def create_state_q_model(
+    num_states: int,
+    actions: Iterable[planning_types.Action],
+    state_repr: StateRepresentation,
+    learning_rate: float,
+    batch_size: int = 100,
+    num_samples: int = 100,
+):
+    """Creates the :class:`Model` for q-values based on states
+
+    This is the interface between the simpel :class:`QModel` and the alpha-zero
+    application (:class:`Model`). Basically this function creates the necessary
+    bridge between the two.
+
+    Assumes states are integers!
+
+    :param num_states: the number of states
+    :param actions: generator that spits out all actions in the environment
+    :param state_repr: maps from planner state type to our model input type (int)
+    :param learning_rate: (alpha) learning step size during model updates
+    :param batch_size: number of 'state' updates to do from 'belief'
+    :param num_samples: number of samples used to estimate loss
+    """
+    action_list = list(actions)
+    num_actions = len(action_list)
+
+    assert num_states > 0 and num_actions > 0 and batch_size > 0 and num_samples > 0
+    assert 0 < learning_rate <= 1
+
+    init_q_values = np.zeros((num_states, num_actions))
+    m = QModel(init_q_values)  # type: ignore
+
+    def infer_leaf(history, simulated_history, state):
+        """Implements :class:`ModelInference`"""
+        q_vals = m.infer(state_repr(state))
+
+        max_q = q_vals.max()
+        stats = {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
+
+        return max_q, stats
+
+    def infer_root(belief, history, info):
+        """Implements :class:`ModelRootInterface`"""
+        mean_q = np.mean(
+            [m.infer(state_repr(belief())) for _ in range(num_samples)], axis=0
+        )
+
+        info["root_q_prediction"] = {a: mean_q[i] for i, a in enumerate(action_list)}
+
+        return {a: {"qval": mean_q[i], "n": 1} for i, a in enumerate(action_list)}
+
+    def update(belief, history, info):
+        """Implements :class:`ModelUpdate`"""
+        target_q = np.array([info["tree_root_stats"][a]["qval"] for a in action_list])
+
+        info["q_prediction_loss"] = np.mean(
+            [m.loss(state_repr(belief()), target_q) for _ in range(num_samples)]
+        )
+
+        for s, p in Counter(state_repr(belief()) for _ in range(batch_size)).items():
+            m.update(s, target_q, learning_rate * (p / batch_size))
+
+    return Model(update, infer_leaf, infer_root)
+
+
+def create_history_q_model(
+    actions: Iterable[planning_types.Action],
+    hist_repr: HistoryRepresentation,
+    learning_rate: float,
+) -> Model:
+    """Creates the :class:`Model` for q-values based on histories
+
+    This is the interface between the simpel :class:`QModel` and the alpha-zero
+    application (:class:`Model`). Basically this function creates the necessary
+    bridge between the two.
+
+    :param actions: generator for (all) available actions, used to map between actions and integers
+    :param hist_repr: maps from planner history type to our model input type (hashable)
+    :param learning_rate: (alpha) learning step size during model updates
+    """
+    action_list = list(actions)
+    num_actions = len(action_list)
+
+    assert num_actions > 0
+    assert 0 < learning_rate <= 1
+
+    initial_q_values: Dict[Hashable, np.ndarray] = defaultdict(
+        lambda: np.zeros(num_actions)
+    )
+
+    # create model
+    m = QModel(initial_q_values)
+
+    def infer_leaf(history, simulated_history, state):
+        """Implements :class:`ModelInference`"""
+        history = hist_repr(history + simulated_history)
+        q_vals = m.infer(history)
+
+        max_q = q_vals.max()
+        stats = {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
+
+        return max_q, stats
+
+    def infer_root(belief, history, info):
+        """Implements :class:`ModelRootInterface`"""
+        q_vals = m.infer(hist_repr(history))
+
+        info["root_value_prediction"] = max(q_vals)
+        info["root_q_prediction"] = {a: q_vals[i] for i, a in enumerate(action_list)}
+
+        return {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
+
+    def update(belief, history, info):
+        """Implements :class:`ModelUpdate`"""
+        history = hist_repr(history)
+
+        target_q = np.array([info["tree_root_stats"][a]["qval"] for a in action_list])
+
+        info["q_prediction_loss"] = m.loss(history, target_q)
+
+        m.update(history, target_q, alpha=learning_rate)
+
+    return Model(update, infer_leaf, infer_root)
+
+
+def create_tabular_model(
     model_input: str,
     model_output: str,
     num_states: int,
     actions: Iterable[planning_types.Action],
+    state_repr: StateRepresentation,
+    hist_repr: HistoryRepresentation,
     policy_target: str,
     learning_rate: float,
     batch_size: int = 100,
@@ -361,6 +529,8 @@ def create_value_and_prior_model(
     :param model_output: in ["value_and_prior", "q_values"]
     :param num_states: ignored when ``model_input`` is "history"
     :param actions: basically a replacement for action space
+    :param state_repr: maps from planner state type to our model input type (int)
+    :param hist_repr: maps from planner history type to our model input type (int)
     :param policy_target: in ["soft_q", "visits"]
     :param learning_rate: (alpha) learning step size during model updates
     :param batch_size: number of updates to do from 'belief' when ``model_input`` is "state"
@@ -380,6 +550,7 @@ def create_value_and_prior_model(
             return create_state_value_and_prior_model(
                 num_states,
                 actions,
+                state_repr,
                 policy_target,
                 learning_rate,
                 batch_size,
@@ -388,7 +559,7 @@ def create_value_and_prior_model(
 
         if model_input == "history":
             return create_history_value_and_prior_model(
-                actions, policy_target, learning_rate
+                actions, hist_repr, policy_target, learning_rate
             )
 
     if model_output == "q_values":
@@ -397,126 +568,12 @@ def create_value_and_prior_model(
 
         if model_input == "state":
             return create_state_q_model(
-                num_states, actions, learning_rate, batch_size, num_samples
+                num_states, actions, state_repr, learning_rate, batch_size, num_samples
             )
 
         if model_input == "history":
-            return create_history_q_model(actions, learning_rate)
+            return create_history_q_model(actions, hist_repr, learning_rate)
 
     raise ValueError(
         f"Unsupported model_input '{model_input}' or model_output '{model_output}'"
     )
-
-
-def create_state_q_model(
-    num_states: int,
-    actions: Iterable[planning_types.Action],
-    learning_rate: float,
-    batch_size: int = 100,
-    num_samples: int = 100,
-):
-    """Creates the :class:`Model` for q-values based on states
-
-    This is the interface between the simpel :class:`QModel` and the alpha-zero
-    application (:class:`Model`). Basically this function creates the necessary
-    bridge between the two.
-
-    Assumes states are integers!
-
-    :param num_states: the number of states
-    :param actions: generator that spits out all actions in the environment
-    :param learning_rate: (alpha) learning step size during model updates
-    :param batch_size: number of 'state' updates to do from 'belief'
-    :param num_samples: number of samples used to estimate loss
-    """
-    # action `i` <==> `action_list[i]`
-    action_list = list(actions)
-    num_actions = len(action_list)
-
-    assert num_states > 0 and num_actions > 0 and batch_size > 0 and num_samples > 0
-    assert 0 < learning_rate <= 1
-
-    init_q_values = np.zeros((num_states, num_actions))
-    m = QModel(init_q_values)
-
-    def infer_leaf(history, state):
-        """Implements :class:`ModelInference`"""
-        q_vals = m.infer(state)
-
-        max_q = q_vals.max()
-        stats = {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
-
-        return max_q, stats
-
-    def infer_root(belief, history, info):
-        """Implements :class:`ModelRootInterface`"""
-        mean_q = np.mean([m.infer(belief()) for _ in range(num_samples)], axis=0)
-
-        info["root_q_prediction"] = {a: mean_q[i] for i, a in enumerate(action_list)}
-
-        return {a: {"qval": mean_q[i], "n": 1} for i, a in enumerate(action_list)}
-
-    def update(belief, history, info):
-        """Implements :class:`ModelUpdate`"""
-        target_q = np.array([info["tree_root_stats"][a]["qval"] for a in action_list])
-
-        info["q_prediction_loss"] = np.mean(
-            [m.loss(belief(), target_q) for _ in range(num_samples)]
-        )
-
-        for s, p in Counter(belief() for _ in range(batch_size)).items():
-            m.update(s, target_q, learning_rate * (p / batch_size))
-
-    return Model(update, infer_leaf, infer_root)
-
-
-def create_history_q_model(
-    actions: Iterable[planning_types.Action], learning_rate: float
-) -> Model:
-    """Creates the :class:`Model` for q-values based on histories
-
-    This is the interface between the simpel :class:`QModel` and the alpha-zero
-    application (:class:`Model`). Basically this function creates the necessary
-    bridge between the two.
-
-    :param actions: generator for (all) available actions, used to map between actions and integers
-    :param learning_rate: (alpha) learning step size during model updates
-    """
-    action_list = list(actions)
-    num_actions = len(action_list)
-
-    assert num_actions > 0
-    assert 0 < learning_rate <= 1
-
-    initial_q_values = defaultdict(lambda: np.zeros(num_actions))
-
-    # create model
-    m = QModel(initial_q_values)
-
-    def infer_leaf(history, state):
-        """Implements :class:`ModelInference`"""
-        q_vals = m.infer(history)
-
-        max_q = q_vals.max()
-        stats = {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
-
-        return max_q, stats
-
-    def infer_root(belief, history, info):
-        """Implements :class:`ModelRootInterface`"""
-        q_vals = m.infer(history)
-
-        info["root_value_prediction"] = max(q_vals)
-        info["root_q_prediction"] = {a: q_vals[i] for i, a in enumerate(action_list)}
-
-        return {a: {"qval": q_vals[i], "n": 1} for i, a in enumerate(action_list)}
-
-    def update(belief, history, info):
-        """Implements :class:`ModelUpdate`"""
-        target_q = np.array([info["tree_root_stats"][a]["qval"] for a in action_list])
-
-        info["q_prediction_loss"] = m.loss(history, target_q)
-
-        m.update(history, target_q, alpha=learning_rate)
-
-    return Model(update, infer_leaf, infer_root)

@@ -20,7 +20,7 @@ def assert_proc_ended_okay(proc):
 def test_flat_pouct():
     """Tests po-uct in :file:`flat_pomdp_experiment.py`"""
 
-    proc = subprocess.Popen(
+    with subprocess.Popen(
         [
             "python",
             "flat_pomdp_experiment.py",
@@ -29,8 +29,8 @@ def test_flat_pouct():
             "conf/solutions/pouct_example.yaml",
         ],
         stderr=subprocess.PIPE,
-    )
-    assert_proc_ended_okay(proc)
+    ) as proc:
+        assert_proc_ended_okay(proc)
 
 
 def test_flat_po_zero():
@@ -40,7 +40,7 @@ def test_flat_po_zero():
 
         for model_output in ["value_and_prior", "q_values"]:
 
-            proc = subprocess.Popen(
+            with subprocess.Popen(
                 [
                     "python",
                     "flat_pomdp_experiment.py",
@@ -51,10 +51,10 @@ def test_flat_po_zero():
                     f"model_output={model_output}",
                 ],
                 stderr=subprocess.PIPE,
-            )
-            assert_proc_ended_okay(proc)
+            ) as proc:
+                assert_proc_ended_okay(proc)
 
-    proc = subprocess.Popen(
+    with subprocess.Popen(
         [
             "python",
             "flat_pomdp_experiment.py",
@@ -64,8 +64,8 @@ def test_flat_po_zero():
             "policy_target=visits",
         ],
         stderr=subprocess.PIPE,
-    )
-    assert_proc_ended_okay(proc)
+    ) as proc:
+        assert_proc_ended_okay(proc)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,12 @@
-"""Random utility functions"""
+"""Random utility functions
+
+Contains logging and some basic math functionality
+"""
+from typing import Any, Dict, List
+
 import numpy as np
+
+import wandb
 
 
 def square_error(target: float, y: float) -> float:
@@ -60,3 +67,106 @@ def minimize_squared_error(target, pred, alpha: float = 0.1):
     :return: next prediction updated with learning step ``alpha``
     """
     return pred + alpha * (target - pred)
+
+
+def log_episode_to_wandb(episode_info: List[Dict[str, Any]]):
+    """Logs basic statistics solutions to wandb
+
+    Uses a lot of domain knowledge to do so, basically assumes the type of data
+    available in ``episode_info``
+    """
+
+    episode = episode_info[0]["episode"]
+    ret = sum(info["reward"] for info in episode_info)
+    initial_root_value = max(
+        stats["qval"] for stats in episode_info[0]["tree_root_stats"].values()
+    )
+
+    wandb.log(
+        {
+            "return": ret,
+            "episode": episode,
+            "initial_root_value": initial_root_value,
+        },
+        step=episode,
+    )
+
+
+def value_and_prior_model_statistics(
+    episode_info: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Collects statistics for 'value and prior' po-zero models
+
+    Uses a lot of domain (po-zero) knowledge to do so, basically assumes the
+    type of data available in ``episode_info``
+
+    Used to later to analyze or log
+    """
+    value_losses = [info["value_prediction_loss"] for info in episode_info]
+    prior_losses = [info["prior_prediction_loss"] for info in episode_info]
+    initial_prior_prediction = {
+        a: stats["prior"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+
+    return {
+        "value_prediction_loss": wandb.Histogram(value_losses),
+        "prior_prediction_loss": wandb.Histogram(prior_losses),
+        "intitial_prior_prediction": initial_prior_prediction,
+    }
+
+
+def q_values_model_statistics(episode_info: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Collects statistics for 'q_values' po-zero models
+
+    Uses a lot of domain (po-zero) knowledge to do so, basically assumes the
+    type of data available in ``episode_info``
+
+    Used to later to analyze or log
+    """
+    q_losses = [info["q_prediction_loss"] for info in episode_info]
+
+    return {
+        "q_prediction_loss": wandb.Histogram(q_losses),
+        "initial_q_prediction": episode_info[0]["root_q_prediction"],
+    }
+
+
+def log_pozero_statistics_to_wandb(
+    episode_info: List[Dict[str, Any]], model_output=str
+):
+    """Logs predictions for po-zero solutions to wandb
+
+    Uses a lot of domain (po-zero) knowledge to do so, basically assumes the
+    type of data available in ``episode_info``
+
+    :param model_output: in ["value_and_prior", "q_values"]
+    """
+    assert model_output in ["value_and_prior", "q_values"]
+
+    episode = episode_info[0]["episode"]
+
+    # general info from ``episode_info``
+    intitial_value_prediction = episode_info[0]["root_value_prediction"]
+    initial_q_values = {
+        a: stats["qval"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+    initial_visitations = {
+        a: stats["n"] for a, stats in episode_info[0]["tree_root_stats"].items()
+    }
+
+    # gather model-output specific statistics from ``episode_info``
+    if model_output == "value_and_prior":
+        model_stats = value_and_prior_model_statistics(episode_info)
+    else:
+        model_stats = q_values_model_statistics(episode_info)
+
+    # log them all (note ** expansion)
+    wandb.log(
+        {
+            "initital_value_prediction": intitial_value_prediction,
+            "initial_q_values": initial_q_values,
+            "initial_visitations": initial_visitations,
+            **model_stats,
+        },
+        step=episode,
+    )

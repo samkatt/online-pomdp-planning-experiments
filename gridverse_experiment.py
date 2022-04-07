@@ -21,6 +21,7 @@ import argparse
 import logging
 import pickle
 from functools import partial
+from operator import eq
 
 import pandas as pd
 import yaml
@@ -29,6 +30,7 @@ from yaml.loader import SafeLoader
 
 import online_pomdp_planning_experiments.gym_gridverse as gym_gridverse_interface
 import wandb
+from online_pomdp_planning_experiments import core
 from online_pomdp_planning_experiments.experiment import run_experiment, set_random_seed
 
 
@@ -92,9 +94,17 @@ def main():
 
     # create solution method
     if conf["solution_method"] == "po-uct":
-        planner = gym_gridverse_interface.create_pouct(gym_gridverse_inner_env, **conf)
-        belief = gym_gridverse_interface.create_rejection_sampling(
-            gym_gridverse_inner_env, conf["num_particles"], conf["verbose"]
+        planner = core.create_pouct(
+            gym_gridverse_inner_env.action_space.actions,
+            gym_gridverse_interface.PlanningSimulator(gym_gridverse_inner_env),
+            **conf
+        )
+        belief = core.create_rejection_sampling(
+            gym_gridverse_inner_env.functional_reset,
+            gym_gridverse_interface.BeliefSimulator(gym_gridverse_inner_env),
+            eq,
+            conf["num_particles"],
+            conf["verbose"],
         )
         episode_reset = [
             partial(gym_gridverse_interface.reset_belief, env=gym_gridverse_inner_env)
