@@ -69,9 +69,17 @@ def main():
         set_random_seed(conf["seed"])
 
     if conf["verbose"]:
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s - %(levelname)s::%(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     else:
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s::%(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
 
     if conf["wandb"]:
         with open(conf["wandb"]) as f:

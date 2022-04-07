@@ -14,7 +14,7 @@ def assert_proc_ended_okay(proc):
         out.append(s)
 
     # must basically be this:
-    assert "INFO:root:Total reward:" in str(out[-1]), str(out)
+    assert " - INFO::root: Total reward:" in str(out[-1]), str(out)
 
 
 def test_flat_pouct():
