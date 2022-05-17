@@ -1,6 +1,6 @@
 online_pomdp_planning @ git+ssh://git@github.com/samkatt/online-pomdp-planning.git@master
 pyyaml
-gym_gridverse @ git+ssh://git@github.com/abaisero/gym-gridverse.git@master
+gym_gridverse @ git+ssh://git@github.com/abaisero/gym-gridverse.git@424f04f98b3131e9004a5cbcb5560e89532a3892
 pomdp_belief_tracking @ git+ssh://git@github.com/samkatt/pomdp-belief-tracking.git@main
 gym_pomdps @ git+ssh://git@github.com/abaisero/gym-pomdps.git@master
 pandas
@@ -8,4 +8,4 @@ scipy
 wandb
 matplotlib
 torch
-general_bayes_adaptive_pomdps @ git+ssh://git@github.com/samkatt/private-gbapomdp.git@aee4248973011f45cc130c354f4d7eb4fae10283
+general_bayes_adaptive_pomdps @ git+ssh://git@github.com/samkatt/private-gbapomdp.git@main

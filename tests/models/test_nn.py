@@ -159,7 +159,7 @@ def test_policy_network():
     l = model.loss(hist_repr(hist), None, target_policy)
     ll = model.loss(hist_repr(hist_2), h1, target_policy)
 
-    assert l == ll and l > 0
+    assert torch.allclose(l, ll) and l > 0
 
     model.update(hist_repr(hist), None, target_policy)
     ll = model.loss(hist_repr(hist_2), h1, target_policy)
@@ -176,7 +176,7 @@ def test_policy_network():
     l = model.loss(hist_repr(hist), None, target_policy)
     ll = model.loss(hist_repr(hist_2), h1, target_policy)
 
-    assert torch.allclose(l, ll, atol=0.0001)
+    assert torch.allclose(l, ll, atol=0.001)
     assert torch.allclose(
         model.infer(hist_repr(hist), None)[0], target_policy, atol=0.01
     )
@@ -457,7 +457,7 @@ def test_create_state_value_and_prior_model():
     assert all(stat["qval"] == 0.0 for stat in leaf_stats.values())
     assert all(1.0 > stat["prior"] > 0.0 for stat in leaf_stats.values())
 
-    assert info["root_value_prediction"] == pytest.approx(v)
+    assert info["root_value_prediction"] == pytest.approx(v, abs=0.001)
     for s, ss in zip(stats.values(), leaf_stats.values()):
         assert s["prior"] == pytest.approx(ss["prior"])
 
@@ -498,7 +498,7 @@ def test_create_state_value_and_prior_model():
 
     # inference over uniform belief should now be good
     stats = m.infer_root(uniform_state_belief, None, info)
-    assert info["root_value_prediction"] == pytest.approx(max_q)
+    assert info["root_value_prediction"] == pytest.approx(max_q, abs=0.001)
     np.testing.assert_allclose(
         soft_q_pol, [s["prior"] for s in stats.values()], atol=0.01
     )
@@ -507,7 +507,7 @@ def test_create_state_value_and_prior_model():
     for s in [s1, s2]:
         stats = m.infer_root(single_state_belief, None, info)
 
-        assert info["root_value_prediction"] == pytest.approx(max_q)
+        assert info["root_value_prediction"] == pytest.approx(max_q, abs=0.01)
         np.testing.assert_allclose(
             soft_q_pol, [s["prior"] for s in stats.values()], atol=0.01
         )
