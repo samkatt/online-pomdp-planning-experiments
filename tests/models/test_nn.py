@@ -19,12 +19,12 @@ def test_basic_QNetwork():
     model = nn.QNetwork(nn.ReactiveNN(dim_in, dim_out), learning_rate)
 
     x = torch.randn(dim_in)
-    target = torch.randn(dim_out)
+    target = torch.randn(dim_out) * 5
 
     y, _ = model.infer(x, None)
     l = model.loss(x, None, target)
 
-    assert not torch.eq(y, target).all()
+    assert not torch.allclose(y, target, atol=0.1)
     assert (model.loss(x, None, y) == 0).all()
     assert l > 0
 
@@ -34,23 +34,21 @@ def test_basic_QNetwork():
     new_l = model.loss(x, None, target)
 
     # assert new output is not old, nor target
-    assert not torch.eq(new_y, target).all()
-    assert not torch.eq(new_y, y).all()
+    assert not torch.allclose(new_y, target, atol=0.01)
+    assert not torch.allclose(new_y, y, atol=0.1)
 
-    assert model.loss(x, None, y) != 0.0
+    assert model.loss(x, None, y) != pytest.approx(0.0, abs=0.01)
     assert model.loss(x, None, new_y) == 0.0
     assert new_l > 0
 
     assert new_l < l
 
     # convergence test
-    while new_l < l:
-        l = new_l
+    for _ in range(1000):
         model.update(x, None, target)
-        new_l = model.loss(x, None, target)
 
-    assert l == pytest.approx(0.0, abs=0.000001)
-    assert torch.allclose(model.infer(x, None)[0], target, atol=0.0001)
+    assert model.loss(x, None, target) == pytest.approx(0.0, abs=0.1)
+    assert torch.allclose(model.infer(x, None)[0], target, atol=0.1)
 
 
 def test_q_model_batch():
@@ -64,12 +62,12 @@ def test_q_model_batch():
     model = nn.QNetwork(nn.ReactiveNN(dim_in, dim_out), learning_rate)
 
     x = torch.randn((n, dim_in))
-    target = torch.randn((n, dim_out))
+    target = torch.randn((n, dim_out)) * 10
 
     y, _ = model.infer(x, None)
     l = model.loss(x, None, target)
 
-    assert not torch.eq(y, target).all()
+    assert not torch.allclose(y, target, atol=0.1)
     assert (model.loss(x, None, y) == 0).all()
     assert l > 0
 
@@ -79,23 +77,21 @@ def test_q_model_batch():
     new_l = model.loss(x, None, target)
 
     # assert new output is not old, nor target
-    assert not torch.eq(new_y, target).all()
-    assert not torch.eq(new_y, y).all()
+    assert not torch.allclose(new_y, target, atol=0.1)
+    assert not torch.allclose(new_y, y, atol=0.1)
 
-    assert model.loss(x, None, y) != 0.0
+    assert model.loss(x, None, y) != pytest.approx(0.0, abs=0.01)
     assert model.loss(x, None, new_y) == 0.0
     assert (new_l > 0).all()
 
     assert new_l < l
 
     # convergence test
-    while new_l < l:
-        l = new_l
+    for _ in range(5000):
         model.update(x, None, target)
-        new_l = model.loss(x, None, target)
 
-    assert l == pytest.approx(0.0, abs=0.000001)
-    assert torch.allclose(model.infer(x, None)[0], target, atol=0.0001)
+    assert model.loss(x, None, target) == pytest.approx(0.0, abs=0.1)
+    assert torch.allclose(model.infer(x, None)[0], target, atol=0.1)
 
 
 def test_policy_network():
@@ -110,7 +106,7 @@ def test_policy_network():
 
     num_actions = len(actions)
     hist_dim = len(actions) + len(obs)
-    learning_rate = 0.1
+    learning_rate = 0.005
 
     def hist_repr(h):
         return torch.tensor(
@@ -134,8 +130,8 @@ def test_policy_network():
     assert h is not None
     assert h_cont is not None
 
-    assert torch.isclose(p_hist, p_hist_cont).all()
-    assert torch.isclose(h, h_cont).all()
+    assert torch.allclose(p_hist, p_hist_cont)
+    assert torch.allclose(h, h_cont, atol=0.001)
 
     # basic test on batch
     batch = torch.stack([hist_repr(hist), hist_repr(hist)])
@@ -147,12 +143,12 @@ def test_policy_network():
     batch = torch.stack([hist_repr(hist_1), hist_repr(hist_2)])
     p_hist_diff, h_diff = model.infer(batch, None)
     assert h_diff is not None
-    assert not torch.eq(p_hist_diff[:, 0], p_hist_diff[:, 1]).all()
-    assert not torch.eq(h_diff[:, 0], h_diff[:, 1]).all()
+    assert not torch.allclose(p_hist_diff[0, :], p_hist_diff[1, :], atol=0.01)
+    assert not torch.allclose(h_diff[:, 0], h_diff[:, 1], atol=0.1)
 
     batch = torch.stack([hist_repr(hist_2), hist_repr(hist_2)])
     p_hist_diff, h_twice = model.infer(batch, h_diff)
-    assert torch.isclose(p_hist_diff[:, 0], p_hist_twice[:, 0], atol=0.01).all()
+    assert torch.allclose(p_hist_diff[0, :], p_hist_twice[0, :], atol=0.1)
 
     target_policy = torch.rand(num_actions).softmax(dim=0)
 
@@ -161,27 +157,34 @@ def test_policy_network():
 
     assert torch.allclose(l, ll) and l > 0
 
-    model.update(hist_repr(hist), None, target_policy)
+    for _ in range(10):
+        model.update(hist_repr(hist), None, target_policy)
+
+    _, h1 = model.infer(hist_repr(hist_1), None)  # get 'new' h1 representation
     ll = model.loss(hist_repr(hist_2), h1, target_policy)
+
     assert ll < l
 
-    model.update(hist_repr(hist_2), h1, target_policy)
+    for _ in range(10):
+        model.update(hist_repr(hist_2), h1, target_policy)
+        _, h1 = model.infer(hist_repr(hist_1), None)  # get 'new' h1 representation
+
     l = model.loss(hist_repr(hist), None, target_policy)
 
     assert l < ll
 
-    for _ in range(500):
+    for _ in range(1000):
         model.update(hist_repr(hist), None, target_policy)
 
     l = model.loss(hist_repr(hist), None, target_policy)
     ll = model.loss(hist_repr(hist_2), h1, target_policy)
 
-    assert torch.allclose(l, ll, atol=0.001)
+    assert torch.allclose(l, ll, atol=0.01)
     assert torch.allclose(
-        model.infer(hist_repr(hist), None)[0], target_policy, atol=0.01
+        model.infer(hist_repr(hist), None)[0], target_policy, atol=0.1
     )
     assert torch.allclose(
-        model.infer(hist_repr(hist_2), h1)[0], target_policy, atol=0.01
+        model.infer(hist_repr(hist_2), h1)[0], target_policy, atol=0.1
     )
 
 
@@ -210,7 +213,7 @@ def test_create_state_q_model():
         assert set(actions) == set(stats)
         assert all(stat["n"] == 1 for stat in stats.values())
 
-        assert max(info["root_q_prediction"].values()) == pytest.approx(v, abs=0.000001)
+        assert max(info["root_q_prediction"].values()) == pytest.approx(v, abs=0.0001)
         assert info["root_q_prediction"] == {
             a: stat["qval"] for a, stat in stats.items()
         }
@@ -225,7 +228,7 @@ def test_create_state_q_model():
 
         for a in actions:
             assert new_leaf_stats[a]["qval"] == pytest.approx(
-                info["tree_root_stats"][a]["qval"], abs=0.00001
+                info["tree_root_stats"][a]["qval"], abs=0.01
             )
 
 
@@ -321,7 +324,7 @@ def test_create_history_q_model():
 def test_create_history_value_and_prior_model():
     """Tests :func:`nn.create_history_value_and_prior_model`"""
 
-    learning_rate = 0.05
+    learning_rate = 0.01
 
     # create actions, observations, and their representation
     actions = ["a1", 2, False]
@@ -392,7 +395,7 @@ def test_create_history_value_and_prior_model():
 
     assert info["root_value_prediction"] == pytest.approx(max_q)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in new_stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in new_stats.values()], atol=0.05
     )
 
     # reset hidden state and check h2 leaf
@@ -401,7 +404,7 @@ def test_create_history_value_and_prior_model():
 
     assert v == pytest.approx(max_q)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.05
     )
 
     # reset hidden state to start of history and check leaf of rest of history
@@ -410,14 +413,14 @@ def test_create_history_value_and_prior_model():
 
     assert v == pytest.approx(max_q)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.05
     )
 
 
 def test_create_state_value_and_prior_model():
     """Tests :func:`nn.create_state_value_and_prior_model`"""
 
-    learning_rate = 0.05
+    learning_rate = 0.01
 
     # create actions, observations, and their representation
     actions = ["a1", 2, False]
@@ -475,7 +478,7 @@ def test_create_state_value_and_prior_model():
 
     assert info["root_value_prediction"] == pytest.approx(max_q)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in new_stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in new_stats.values()], atol=0.05
     )
 
     # check h2 leaf
@@ -483,7 +486,7 @@ def test_create_state_value_and_prior_model():
 
     assert v == pytest.approx(max_q)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in new_leaf_stats.values()], atol=0.05
     )
 
     # s2 should not have been updated
@@ -498,9 +501,9 @@ def test_create_state_value_and_prior_model():
 
     # inference over uniform belief should now be good
     stats = m.infer_root(uniform_state_belief, None, info)
-    assert info["root_value_prediction"] == pytest.approx(max_q, abs=0.001)
+    assert info["root_value_prediction"] == pytest.approx(max_q, abs=0.01)
     np.testing.assert_allclose(
-        soft_q_pol, [s["prior"] for s in stats.values()], atol=0.01
+        soft_q_pol, [s["prior"] for s in stats.values()], atol=0.05
     )
 
     # inference over both states should be correct
@@ -509,13 +512,13 @@ def test_create_state_value_and_prior_model():
 
         assert info["root_value_prediction"] == pytest.approx(max_q, abs=0.01)
         np.testing.assert_allclose(
-            soft_q_pol, [s["prior"] for s in stats.values()], atol=0.01
+            soft_q_pol, [s["prior"] for s in stats.values()], atol=0.05
         )
 
         v, stats = m.infer_leaf(None, None, s)
-        assert v == pytest.approx(max_q)
+        assert v == pytest.approx(max_q, abs=0.01)
         np.testing.assert_allclose(
-            soft_q_pol, [s["prior"] for s in stats.values()], atol=0.01
+            soft_q_pol, [s["prior"] for s in stats.values()], atol=0.05
         )
 
 

@@ -22,7 +22,6 @@ import pickle
 from functools import partial
 from typing import Any, Dict, List
 
-import numpy as np
 import pandas as pd
 import torch
 import yaml
@@ -102,7 +101,7 @@ def main():
     belief = core.create_rejection_sampling(
         env.sample_start_state,
         gba_pomdp_interface.BeliefSimulator(env),
-        np.array_equal,
+        lambda x, y: (x == y).all(),
         conf["num_particles"],
         conf["verbose"],
     )

@@ -35,6 +35,34 @@ HistoryRepresentation = Callable[[planning_types.History], torch.Tensor]
 """This maps between planner history and input of our models (tensors)"""
 
 
+def create_linear_layer(
+    input_n: int, output_n: int, activation="linear"
+) -> torch.nn.Module:
+    """A small helper function to create a linear layer
+
+    Creates a linear layer with of size ``input_n`` by ``output_n``. Will
+    *normalize* the linear layer.
+
+    NOTE: this function _could_ be generalized to different non-linearity
+    layers. But can't be bothered atm.
+
+    :param input_n: number of inputs to the layer
+    :param output_n: number of outputs of the layer
+    :param activation: what activation to expect 'after' (in ["linear", "tanh"])
+    :return: `torch.nn.Linear` (normalized)
+    """
+    assert input_n > 0 and output_n > 0
+    assert activation in ["linear", "tanh"]
+
+    gain = torch.nn.init.calculate_gain(activation)
+
+    fcl = torch.nn.Linear(input_n, output_n)
+    torch.nn.init.xavier_normal_(fcl.weight, gain)
+    torch.nn.init.zeros_(fcl.bias)
+
+    return fcl
+
+
 class NN(Protocol):
     """Unifies all neural networks in this module
 
@@ -94,13 +122,12 @@ class ReactiveNN(torch.nn.Module, NN):
 
         # construct actual layers
         layers = torch.nn.ModuleList(
-            [torch.nn.Linear(input_dim, n_hidden_nodes), torch.nn.Tanh()]
+            [create_linear_layer(input_dim, n_hidden_nodes, "tanh"), torch.nn.Tanh()]
         )
         for _ in range(n_hidden_layers - 1):
-            layers.extend(
-                [torch.nn.Linear(n_hidden_nodes, n_hidden_nodes), torch.nn.Tanh()]
-            )
-        layers.append(torch.nn.Linear(n_hidden_nodes, output_dim))
+            layers.append(create_linear_layer(n_hidden_nodes, n_hidden_nodes, "tanh"))
+            layers.append(torch.nn.Tanh())
+        layers.append(create_linear_layer(n_hidden_nodes, output_dim))
 
         self.model = torch.nn.Sequential(*layers)
         self.to(DEVICE)
@@ -149,10 +176,10 @@ class RecurrentNN(torch.nn.Module, NN):
 
         # construct FC layers
         layers = torch.nn.ModuleList(
-            [torch.nn.Linear(input_dim, n_hidden_nodes), torch.nn.Tanh()]
+            [create_linear_layer(input_dim, n_hidden_nodes, "tanh"), torch.nn.Tanh()]
         )
         for _ in range(n_pre_rnn_hidden_layers - 1):
-            layers.append(torch.nn.Linear(n_hidden_nodes, n_hidden_nodes))
+            layers.append(create_linear_layer(n_hidden_nodes, n_hidden_nodes, "tanh"))
             layers.append(torch.nn.Tanh())
         self.pre_rnn_layers = torch.nn.Sequential(*layers)
 
@@ -169,18 +196,18 @@ class RecurrentNN(torch.nn.Module, NN):
         input_size = self.n_hidden_rec_nodes
 
         if n_post_rnn_hidden_layers > 0:
-            layers.extend(
-                [torch.nn.Linear(input_size, n_hidden_nodes), torch.nn.Tanh()]
-            )
+            layers.append(create_linear_layer(input_size, n_hidden_nodes, "tanh"))
+            layers.append(torch.nn.Tanh())
 
             for _ in range(n_post_rnn_hidden_layers - 1):
-                layers.extend(
-                    [torch.nn.Linear(n_hidden_nodes, n_hidden_nodes), torch.nn.Tanh()]
+                layers.append(
+                    create_linear_layer(n_hidden_nodes, n_hidden_nodes, "tanh")
                 )
+                layers.append(torch.nn.Tanh())
 
             input_size = n_hidden_nodes
 
-        layers.append(torch.nn.Linear(input_size, output_dim))
+        layers.append(create_linear_layer(input_size, output_dim))
 
         self.post_rnn_layers = torch.nn.Sequential(*layers)
         self.to(DEVICE)
