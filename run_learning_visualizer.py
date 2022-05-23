@@ -1,4 +1,12 @@
-"""Plans value and prior NN model on random tiger interactions"""
+"""Plans value and prior NN model on random tiger interactions
+
+Will run po-zero (currently value-and-prior neural network) on Tiger problem
+and visualize learning curves (predicted value and priors) for various key
+'histories' (empty, hear left once, etc). This script is here to provide some
+insight in the behavior of the algorithm, and to do some quick prototyping,
+(e.g. whether to use SGD or Adam).
+
+"""
 
 from functools import partial
 
@@ -35,10 +43,10 @@ def main():
     # some parameters
     env = Tiger(True)
     learning_rate = 0.01
-    ucb_constant = 0.5
-    action_selection = "soft_q"
-    policy_target = "visits"
-    num_sims = 64
+    ucb_constant = 1.0
+    action_selection = "prior_prob"
+    policy_target = "soft_q"
+    num_sims = 32
 
     model = nn_models.create_nn_model(
         "history",
@@ -49,7 +57,7 @@ def main():
         torch.Tensor,
         partial(gba_pomdp_interface.history_to_tensor, env=env),
         policy_target,
-        learning_rate
+        learning_rate,
     )
 
     belief = core.create_rejection_sampling(
