@@ -106,7 +106,7 @@ def test_policy_network():
 
     num_actions = len(actions)
     hist_dim = len(actions) + len(obs)
-    learning_rate = 0.005
+    learning_rate = 0.001
 
     def hist_repr(h):
         return torch.tensor(

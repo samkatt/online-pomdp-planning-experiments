@@ -242,7 +242,7 @@ def test_q_model():
         m.update(random_input, random_target_q, alpha=1.0)
         assert m.loss(random_input, init_qvalues) > 0.0
         assert m.loss(random_input, random_target_q) == pytest.approx(0.0)
-        np.testing.assert_array_equal(m.infer(random_input), random_target_q)
+        np.testing.assert_array_almost_equal(m.infer(random_input), random_target_q)
 
         # test convergence
         m.update(random_input, np.random.random(num_actions), 1.0)  # reset

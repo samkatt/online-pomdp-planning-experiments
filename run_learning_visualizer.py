@@ -20,6 +20,7 @@ from online_pomdp_planning_experiments import core, gba_pomdp_interface
 
 
 def main():
+    """Runs po-zero on Tiger and plots some statistics"""
 
     histories = {
         "root": [],
@@ -42,9 +43,9 @@ def main():
 
     # some parameters
     env = Tiger(True)
-    learning_rate = 0.01
+    learning_rate = 0.005
     ucb_constant = 1.0
-    action_selection = "prior_prob"
+    action_selection = "visits_prob"
     policy_target = "soft_q"
     num_sims = 32
 
@@ -83,7 +84,7 @@ def main():
     # data to plot
     results = []
 
-    for _ in range(100):
+    for _ in range(500):
 
         terminal = False
         history = []
@@ -128,6 +129,7 @@ def main():
 
         plt.title(f"prior({h})")
         plt.legend()
+        plt.ylim([0, 1])
 
     plt.show()
 

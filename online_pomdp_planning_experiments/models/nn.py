@@ -269,7 +269,7 @@ class QNetwork:
         :param learning_rate: the step-size for learning this network
         """
         self.model = network
-        self.optimizer = torch.optim.SGD(self.model.parameters(), learning_rate)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), learning_rate)
         self.loss_fn = torch.nn.MSELoss()
 
     def infer(
@@ -332,7 +332,7 @@ class PolicyNetwork:
 
     Used to learn and output an action distribution. Uses the
     :class:`torch.nn.CrossEntropyLoss` loss function and
-    :class:`torch.optim.SGD` optimizer.
+    :class:`torch.optim.Adam` optimizer.
 
     """
 
@@ -343,10 +343,12 @@ class PolicyNetwork:
         :param learning_rate: the 'step size' (alpha) during updates
         """
         self.model = network
-        self.optimizer = torch.optim.SGD(self.model.parameters(), learning_rate)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), learning_rate)
 
         # none specifies that the resulting loss should not be averaged/summed/etc
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+
+        self.losses = []
 
     def infer(
         self, x: Optional[torch.Tensor], h: Optional[torch.Tensor]
