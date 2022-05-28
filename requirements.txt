@@ -9,3 +9,4 @@ wandb
 matplotlib
 torch
 general_bayes_adaptive_pomdps @ git+ssh://git@github.com/samkatt/private-gbapomdp.git@main
+seaborn
