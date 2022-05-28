@@ -81,9 +81,7 @@ def main():
     )
 
     print("Aggregating results...")
-    aggregated_data = aggregate_data_frames(
-        all_data, DATA_SUMMARY_CONFIG
-    )
+    aggregated_data = aggregate_data_frames(all_data, DATA_SUMMARY_CONFIG)
     discounted_return_histogram = (
         (
             all_data[["discounted_reward", "episode", "run"]]
@@ -95,9 +93,7 @@ def main():
     )
 
     print("Generating plots...")
-    figs: Dict[str, plt.Figure] = generate_figures(
-        all_data, discounted_return_histogram, args
-    )
+    figs: Dict[str, plt.Figure] = generate_figures(discounted_return_histogram, args)
 
     # save plots
     if args.save_path:
@@ -162,9 +158,7 @@ def read_data_to_frame(files: List[str], conf) -> Tuple[pd.DataFrame, Dict[str, 
     return aggregation, conf
 
 
-def aggregate_data_frames(
-    df: pd.DataFrame, conf
-) -> pd.DataFrame:
+def aggregate_data_frames(df: pd.DataFrame, conf) -> pd.DataFrame:
     """Here we collect the important data points from data frames ``df``
 
     The idea is really that we use ``conf`` to know _how_ to aggregate, i.e.
@@ -253,15 +247,11 @@ def log_to_wandb(
         )
 
 
-def generate_figures(
-    all_data: pd.DataFrame, discounted_return_histogram: pd.DataFrame, args
-) -> Dict[str, plt.Figure]:
+def generate_figures(df: pd.DataFrame, args) -> Dict[str, plt.Figure]:
     """Returns a map of matplotlib figures!
 
-    :params all_data: is the dataframe containing _all_ data (surprise!)
     :return: a dictionary containing figures, each with a label
     """
-    df = discounted_return_histogram
     # to be returned
     figs: Dict[str, plt.Figure] = {}
 
@@ -273,7 +263,8 @@ def generate_figures(
     if args.individual:
         f, ax = plt.subplots()
         figs["individual"] = f
-        ax.plot(df.rolling(len(df) // 25).mean(), color="blue", label=None, alpha=alpha)
+        ax.plot(df, color="blue", label=None, alpha=alpha)
+        # ax.plot(df.rolling(len(df) // 25).mean(), color="blue", label=None, alpha=alpha)
 
     if args.aggregate:
         f, ax = plt.subplots()
@@ -321,15 +312,30 @@ def generate_figures(
         f, ax = plt.subplots()
         figs["scatterplot"] = f
 
-        all_data.plot(
+        df.stack().reset_index().plot(
             ax=ax,
+            # So `reset_index()` does wacky stuff IMHO in terms of naming the
+            # columns. I'm sure there is a way to do this properly, but hey, it
+            # works. And if it works, it ain't stupid. Note: we are creating a
+            # completely un-stacked/un-pivoted data frame, where there are
+            # supposed to be columns for 'episode' and 'discounted_return', but
+            # those get renamed to... 'level_0' and 0, naturally
             x="episode",
-            y="discounted_reward",
+            y=0,
             kind="scatter",
             alpha=alpha,
             edgecolor="none",
             color="black",
         )
+
+    # So.. Do not ask me why, but different versions (architectures?) act
+    # slightly differently (i.e. crash) depending on whether we 'draw' these
+    # things first. I am sure it is absolutely fascinating to know why, have a
+    # better fix, and be a good programmer. However,  I will spend my time
+    # differently, and get on with my life. (error happens during
+    # `fig.canvas.tostring_rgb()` call when logging to wandb)
+    for f in figs.values():
+        f.canvas.draw()
 
     return figs
 
