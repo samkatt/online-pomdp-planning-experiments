@@ -75,11 +75,11 @@ def test_PlanningSimulator():
         False,
     )
 
-    a, info = planner(lambda: np.array([Tiger.LEFT]), None)
+    a, info = planner(lambda: np.array([Tiger.LEFT]), [])
     assert sum(stat["n"] for stat in info["tree_root_stats"].values()) == num_sims
     assert a == Tiger.LEFT
 
-    a, info = planner(Tiger.sample_start_state, None)
+    a, info = planner(Tiger.sample_start_state, [])
     assert sum(stat["n"] for stat in info["tree_root_stats"].values()) == num_sims
     assert a == Tiger.LISTEN
 
@@ -115,6 +115,7 @@ def test_running():
             model,
             num_sims,
             0.95,
+            3,
             3,
             0.95,
             backup_operator,

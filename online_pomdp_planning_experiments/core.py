@@ -78,18 +78,23 @@ def create_pouct(
     :param sim: the simulator used to simulate trajectories during planning
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
-    library_planner = mcts.create_POUCT(
+    # PERF: separate construction from calling to improve performance
+    # Unfortunately horizon is *dynamic* and needs to be set for each call
+    # As a result, with the current API, we cannot just construct a planner
+    # and call it for all horizons. Hence, we are currently stuck to construct
+    # it for each call. AFAIK there is no way to do this with partial or otherwise
+    # in python, but happy to be proven wrong.
+    return lambda b, h: mcts.create_POUCT(
         list(actions),
         sim,
         num_sims,
         ucb_constant=ucb_constant,
-        horizon=horizon,
+        horizon=horizon - len(h),
         rollout_depth=rollout_depth,
         max_tree_depth=max_tree_depth,
         discount_factor=discount_factor,
         progress_bar=verbose,
-    )
-    return lambda b, _: library_planner(b)
+    )(b)
 
 
 def create_rejection_sampling(
@@ -122,6 +127,7 @@ def create_pouct_with_models(
     model: Model,
     num_sims: int,
     ucb_constant: float,
+    horizon: int,
     max_tree_depth: int,
     discount_factor: float,
     backup_operator: str,
@@ -147,7 +153,7 @@ def create_pouct_with_models(
     :param _: for easy of forwarding dictionaries, this accepts and ignores any superfluous arguments
     """
     # basic input validation
-    assert num_sims > 0 and ucb_constant > 0 and max_tree_depth > 0
+    assert num_sims > 0 and ucb_constant > 0 and max_tree_depth > 0 and horizon > 0
     assert 0 < discount_factor <= 1
     assert action_selection in [
         "max_q",
@@ -195,10 +201,6 @@ def create_pouct_with_models(
             get_base_term=lambda _: ucb_constant,
         )
 
-    leaf_select = partial(
-        mcts.select_leaf_by_max_scores, sim, node_scoring_method, max_tree_depth
-    )
-
     backprop = partial(
         mcts.backprop_running_q,
         discount_factor=discount_factor,
@@ -228,6 +230,19 @@ def create_pouct_with_models(
             stats = model.infer_root(belief, history, info)
             root = mcts.create_root_node_with_child_for_all_actions(belief, info, stats)
             return root
+
+        # Note that the horizon is 'dynamic', in the sense that it decreases when history grows
+        remaining_horizon = horizon - len(history)
+        assert (
+            remaining_horizon > 0
+        ), f"Calling planner with larger history {len(history)} than horizon {horizon}"
+
+        # We will plan until either our `remaining_horizon` is met, or the `max_tree_depth`
+        max_depth = min(max_tree_depth, remaining_horizon)
+
+        leaf_select = partial(
+            mcts.select_leaf_by_max_scores, sim, node_scoring_method, max_depth
+        )
 
         leaf_eval = partial(
             mcts.expand_and_evaluate_with_model, model=evaluate_and_expand_model
