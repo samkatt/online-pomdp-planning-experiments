@@ -235,7 +235,7 @@ def create_pouct_with_models(
         remaining_horizon = horizon - len(history)
         assert (
             remaining_horizon > 0
-        ), f"Calling planner with larger history {len(history)} than horizon {horizon}"
+        ), f"Calling planner with larger history ({len(history)}) than horizon ({horizon})"
 
         # We will plan until either our `remaining_horizon` is met, or the `max_tree_depth`
         max_depth = min(max_tree_depth, remaining_horizon)
@@ -255,6 +255,7 @@ def create_pouct_with_models(
             leaf_eval,
             backprop,
             action_select,
+            remaining_horizon,
             belief,
         )
 
