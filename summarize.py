@@ -54,16 +54,16 @@ def main():
 
     # flags to include figures or not
     global_parser.add_argument(
-        "--aggregate", action="store_true", help="Generatee an aggregated plot"
+        "--aggregate", action="store_false", help="Generatee an aggregated plot"
     )
     global_parser.add_argument(
-        "--individual", action="store_true", help="Generate plot with individual lines"
+        "--individual", action="store_false", help="Generate plot with individual lines"
     )
     global_parser.add_argument(
-        "--heatmap", action="store_true", help="Generate heatmap plot"
+        "--heatmap", action="store_false", help="Generate heatmap plot"
     )
     global_parser.add_argument(
-        "--scatterplot", action="store_true", help="Generate scatterplot"
+        "--scatterplot", action="store_false", help="Generate scatterplot"
     )
 
     global_parser.add_argument("--wandb", help="Path to wandb configuration file")
